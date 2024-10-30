@@ -7,8 +7,8 @@ import shutil
 from skopt import gp_minimize
 from skopt.space import Real
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
-from skopt.plots import plot_convergence, plot_gaussian_process
+from sklearn.preprocessing import MinMaxScaler
+
 
 # Define the required run parameters and directories
 start_year = 1969
@@ -41,10 +41,6 @@ velma_parameters = {
 
 # List of parameter values for easy dataframe writing
 parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
-
-# Format parameter ranges for use in Bayesian optimizer
-param_space = [Real(velma_parameters[param]["min"], velma_parameters[param]["max"], name=param)
-    for param in velma_parameters]
 
 # Formats parameters so they can modify the VELMA run
 parameter_modifiers = [f'--kv="{param}",{velma_parameters[param]["value"]}' for param in velma_parameters]
@@ -93,19 +89,21 @@ default_df = pd.read_csv(default_results, usecols=['YEAR', 'Runoff_Nash-Sutcliff
 
 def evaluate_model(eval_year, eval_nse, defaults=default_df):
     default_nse = default_df.loc[default_df['YEAR'] == eval_year, 'Runoff_Nash-Sutcliffe_Coefficient'].values[0]
-    reward = eval_nse - default_nse
+    reward = 100*(eval_nse - default_nse)
     return reward
     
 reward = evaluate_model(end_spinup_year, nse)
 
 # Initialize Q-table
-q_table = pd.DataFrame(columns=list(velma_parameters.keys())+['Reward', 'NSE', 'Year'])
-q_table.loc[len(q_table)] = parameter_values + [reward, nse, end_spinup_year]
 # Check whether the file exists so that old data isn't overwritten
 if not os.path.isfile(q_table_output):
-    q_table.to_csv(q_table_output, mode='w', header=True)
+    q_table = pd.DataFrame(columns=list(velma_parameters.keys())+['Reward', 'NSE', 'Year'])
+    q_table.to_csv(q_table_output, mode='w', index=False)
 else:
-    q_table.to_csv(q_table_output, mode='a', header=False)
+    q_table = pd.read_csv(q_table_output)
+q_table.loc[len(q_table)] = parameter_values + [reward, nse, end_spinup_year]
+q_table.loc[[len(q_table)-1]].to_csv(q_table_output, mode='a', header=False, index=False)
+print('Q-table initialized.')
 
 # Check if running_averages.csv exists; if not, need to initialize it
 # Initialize table of parameters to record unique values and average NSE
@@ -117,16 +115,20 @@ else:
 
 print('Q-table and average reward table initialized.')
 
-# Gaussian Process Regression (surrogate model)
-def fit_gp_model(running_average):
-    X = running_average.iloc[:, :-1].values
-    Y = running_average['Average_Reward'].values
-    kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=1, length_scale_bounds=(1e-2, 1e2))
-    gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
-    gp_model.fit(X,Y)
-    return gp_model
+# Scale the data for use in GPR and Bayesian optimization
+scaler = MinMaxScaler()
+param_bounds = ([[velma_parameters[param]['min'], velma_parameters[param]['max']] for param in velma_parameters])
+param_bounds = np.array(param_bounds).T
+scaled_bounds = scaler.fit_transform(param_bounds)
+scaled_bounds = scaled_bounds.T
+param_space = [(bound[0], bound[1]) for bound in scaled_bounds]
 
-gp_model = fit_gp_model(running_average)
+# Gaussian Process Regression (surrogate model)
+X = running_average.iloc[:, :-1].values
+X_scaled = scaler.transform(X)
+Y = running_average['Average_Reward'].values
+gp_model = GaussianProcessRegressor(n_restarts_optimizer=20)
+gp_model = gp_model.fit(X_scaled, Y)
 
 def objective(parameters):
     predicted_reward = gp_model.predict([parameters])[0]
@@ -139,6 +141,19 @@ for year in range(start_learning_year, end_year+1):
     # Locations of folders for start data and end data
     start_data = f'{results_folder_root}/Results_{str(year - 1)}'
     end_data = f'{results_folder_root}/Results_{str(year)}'
+    
+    # If there are less than 8 points in the q_table, force random exploration of the parameter space
+    if len(q_table) < 8:
+        print(f"Q-table is too sparse. Forcing random exploration of parameter space.")    
+        parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 2) 
+                            for param in velma_parameters]
+        for idx, param in enumerate(velma_parameters.keys()):
+            velma_parameters[param]['value'] = parameter_values[idx]
+        # Formats parameters so they can modify the VELMA run
+        parameter_modifiers = [f'--kv="{param}",{velma_parameters[param]["value"]}' for param in velma_parameters]
+        print(f"Values for {year} were changed to:")
+        for param in velma_parameters.keys():
+            print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
 
     # Run VELMA for the current year
     if velma_parallel:
@@ -176,12 +191,11 @@ for year in range(start_learning_year, end_year+1):
     
     # Calculate reward
     reward = evaluate_model(year, nse)
-    
     print(f"Reward for {year} was {round(reward, 3)}.")
 
     # Update the Q-table
     q_table.loc[len(q_table)] = parameter_values + [reward, nse, year]
-    q_table.loc[[len(q_table)-1]].to_csv(q_table_output, mode='a', header=False)
+    q_table.loc[[len(q_table)-1]].to_csv(q_table_output, mode='a', header=False, index=False)
     
     # Update the running average table
     mask = (q_table.iloc[:, :len(parameter_values)] == parameter_values).all(axis=1)
@@ -206,15 +220,16 @@ for year in range(start_learning_year, end_year+1):
     running_average.to_csv(running_average_output, index=False)
     
     # Update surrogate model (Gaussian Process Regression)
-    gp_model = fit_gp_model(running_average)
+    X = running_average.iloc[:, :-1].values
+    X_scaled = scaler.transform(X)
+    Y = running_average['Average_Reward'].values
+    gp_model.fit(X_scaled, Y)
     
     # Plot the GPR
-    X = running_average.iloc[:, :-1].values
-    Y = running_average['Average_Reward'].values
-    param_ranges = [np.linspace(velma_parameters[param]['min'], velma_parameters[param]['max'], 50) for param in velma_parameters]
-    mesh = np.meshgrid(*param_ranges)
-    X_pred = np.vstack([m.ravel() for m in mesh]).T
-    Y_pred, sigma = gp_model.predict(X_pred, return_std=True)
+    X_pred = np.column_stack([np.linspace(velma_parameters[param]['min'], velma_parameters[param]['max'], 100)
+        for param in velma_parameters])
+    X_pred_scaled = scaler.transform(X_pred)
+    Y_pred, sigma = gp_model.predict(X_pred_scaled, return_std=True)
     
     for i, param in enumerate(velma_parameters.keys()):
         plt.figure(figsize=(10, 6))
@@ -234,13 +249,17 @@ for year in range(start_learning_year, end_year+1):
     result = gp_minimize(
         func=objective,
         dimensions=param_space,
-        x0=running_average.iloc[:, :-1].values.tolist(),  # Past parameter sets
-        y0=-np.array(running_average['Average_Reward'].values),  # Rewards (use numpy to turn negative because using minimization)
+        x0=[list(row) for row in X_scaled],  # Past parameter sets
+        y0=-Y,  # Rewards (use numpy to turn negative because using minimization)
         n_calls=30,
         acq_func='EI',
     )
     
-    best_parameters = [round(x, 2) for x in result.x]
+    best_scaled_params = result.x
+    best_parameters = scaler.inverse_transform([best_scaled_params])[0]
+    best_parameters = [round(param, 2) for param in best_parameters]
+    # best_parameters = [np.clip(best_parameters[i], velma_parameters[param]['min'], velma_parameters[param]['max'])
+                    #    for i, param in enumerate(velma_parameters.keys())]
 
     # Update VELMA parameters for the next run
     for idx, param in enumerate(velma_parameters.keys()):
@@ -249,9 +268,9 @@ for year in range(start_learning_year, end_year+1):
     parameter_modifiers = [f'--kv="{param},{velma_parameters[param]["value"]}"' for param in velma_parameters]
 
     # Print adjusted parameters for the current year
-    print(f"Updated parameters for year {year}:")
+    print(f"Updated parameters for year {year+1}:")
     for param in velma_parameters.keys():
-        print(f"{param}: {velma_parameters[param]['value']}")       
+        print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")       
 
     # Delete unnecessary data to save space
     if year > start_learning_year+2:
