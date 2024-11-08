@@ -45,6 +45,8 @@ velma_parameters = {
     # Can add/remove parameters, but doing so necessitates manual changes to q-table and running-average table
 }
 
+parameter_names = [velma_parameters[param]["name"] for param in velma_parameters]
+
 # List of parameter values for easy dataframe writing
 parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
 
@@ -272,12 +274,12 @@ for year in range(start_learning_year, end_year+1):
         plt.plot(X_sorted, Y_pred_sorted, 'b-', label='GPR Predictions')
         plt.fill_between(X_sorted, Y_pred_sorted - 1.96 * sigma, Y_pred_sorted + 1.96 * sigma,
                         alpha=0.2, color='blue', label='95% Confidence Interval')
-        plt.title(f'Gaussian Process Regression Update for {velma_parameters[i]}')
-        plt.xlabel(f'{velma_parameters[i]}')
+        plt.title(f'Gaussian Process Regression Update for {parameter_names[i]}')
+        plt.xlabel(f'{parameter_names[i]}')
         plt.ylabel('Rewards')
         plt.legend()
         plt.grid()
-        plt.savefig(f'{figure_path}/test/gpr_{velma_parameters[i]}')
+        plt.savefig(f'{figure_path}/test/gpr_{parameter_names[i]}')
         plt.close()
     
     # Run Bayesian optimization to estimate the new parameter set
