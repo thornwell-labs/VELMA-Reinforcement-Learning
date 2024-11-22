@@ -6,42 +6,45 @@ import os
 import shutil
 from skopt import gp_minimize
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, WhiteKernel
+from sklearn.gaussian_process.kernels import Matern, DotProduct, WhiteKernel
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
+import random
 
 
 # Define the required run parameters and directories
 start_year = 1987
-start_learning_year = 1990
-end_year = 2021
-allocated_memory = "-Xmx20G"
-jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v002.jar"
-working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Hoko/Hoko_Working'
-xml_name = 'WA_Hoko30m_1Nov2024'
+start_learning_year = 1991
+end_year = 2012
+allocated_memory = "-Xmx10G"
+jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
+working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
+xml_name = 'WA_Huge30m_18Nov2024'
 xml_path = f'{working_directory}/XML/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
 velma_parallel = True
+epsilon = 0.2 # set the rate of random exploration here
 # default_results file contains starting NSE values for comparison
-default_results = f'{results_folder_root}/WA_Hoko_24Oct2024_Results/AnnualHydrologyResults.csv'
+default_results = f'{results_folder_root}/MULTI_WA_Huge30m_18Nov2024_default/Results_75524/AnnualHydrologyResults.csv'
 # Required run parameters if velma_parallel is True
-outlet_id = '100002'
+outlet_id = '75524'
 max_processes = "6"
+
 
 # Define starting and allowable VELMA parameter ranges
 velma_parameters = {
-    '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.2},
+    # '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
     '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
     '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
-    '/soil/Lowland_Loam/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
-    '/soil/LowlandLoam_Shallow/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
-    '/soil/LowlandLoam_Deep/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
-    '/soil/Lowland_Loam/surfaceKs': {'name': 'MediumKs','value': 1200, 'min': 400, 'max': 2000},
-    '/soil/LowlandLoam_Shallow/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
-    '/soil/LowlandLoam_Deep/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
+    # '/soil/Lowland_Loam/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
+    # '/soil/LowlandLoam_Shallow/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
+    # '/soil/LowlandLoam_Deep/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
+    # '/soil/Lowland_Loam/surfaceKs': {'name': 'MediumKs','value': 891, 'min': 400, 'max': 2000},
+    # '/soil/LowlandLoam_Shallow/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
+    # '/soil/LowlandLoam_Deep/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
     # Can add/remove parameters, but doing so necessitates manual changes to q-table and running-average table
 }
 
@@ -99,7 +102,7 @@ precip = precip.values[0]
 print(f'End spin-up year had NSE = {nse}.')
 
 # Calculate the reward by comparing the new performance to the default performance
-default_df = pd.read_csv(default_results, usecols=['YEAR', 'Runoff_Nash-Sutcliffe_Coefficient', ])
+default_df = pd.read_csv(default_results, usecols=['YEAR', 'Runoff_Nash-Sutcliffe_Coefficient'])
 
 def evaluate_model(eval_year, eval_nse, defaults=default_df):
     default_nse = default_df.loc[default_df['YEAR'] == eval_year, 'Runoff_Nash-Sutcliffe_Coefficient'].values[0]
@@ -128,7 +131,7 @@ else:
     running_average.loc[0] = parameter_values + [reward]
     running_average.to_csv(running_average_output, index=False)
 
-print('Q-table and average reward table initialized.')
+print('Average reward table initialized.')
 
 # Scale the data for use in GPR and Bayesian optimization
 # Check whether the current parameter bounds or the min/max in the data should be used for scaling
@@ -156,7 +159,8 @@ X_scaled = scaler.transform(X)
 
 # Gaussian Process Regression (surrogate model)
 Y = running_average['Average_Reward'].values
-gp_model = GaussianProcessRegressor(n_restarts_optimizer=20, kernel=RBF()+WhiteKernel(noise_level_bounds=(1e-3, 1.0)))
+kernel = DotProduct(sigma_0_bounds=(1e-20, 1e5)) + Matern(length_scale_bounds=(1e-12, 100)) + WhiteKernel(noise_level=1)
+gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=200)
 gp_model = gp_model.fit(X_scaled, Y)
 
 def objective(parameters):
@@ -172,17 +176,22 @@ for year in range(start_learning_year, end_year+1):
     end_data = f'{results_folder_root}/Results_{str(year)}'
     
     # If there are less than (3 * #parameters) unique data points, force random exploration of the parameter space
-    if len(running_average) < 3*len(velma_parameters):
-        print(f"Q-table is too sparse. Forcing random exploration of parameter space.")    
+    # There's a probability (epsilon) of further exploration of the parameter space
+    if len(running_average) < 3*len(velma_parameters) or random.random() < epsilon:
+        if len(running_average) < 3*len(velma_parameters):
+            print("Q-table is too sparse.")
+        print(f"Forcing random exploration of parameter space.")    
         parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
                             for param in velma_parameters]
         for idx, param in enumerate(velma_parameters.keys()):
             velma_parameters[param]['value'] = parameter_values[idx]
         # Formats parameters so they can modify the VELMA run
         parameter_modifiers = [f'--kv="{param}",{velma_parameters[param]["value"]}' for param in velma_parameters]
-        print(f"Values for {year} were changed to:")
-        for param in velma_parameters.keys():
-            print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
+        
+    # Print the parameter values, whether they were changed or not
+    print(f"Values for {year} are:")
+    for param in velma_parameters.keys():
+        print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
 
     # Run VELMA for the current year
     if velma_parallel:
@@ -256,30 +265,41 @@ for year in range(start_learning_year, end_year+1):
     gp_model.fit(X_scaled, Y)
     
     # Y_pred for R^2 score
-    Y_pred, sigma = gp_model.predict(X_scaled, return_std=True)
+    Y_pred = gp_model.predict(X_scaled)
     r2 = r2_score(Y, Y_pred)
     print(f'R^2 score for the GPR was {r2:.4f}')
 
+    # Add in data for plotting
+    X_plot = []
+    for i, col in enumerate(X_scaled.T):
+        X_added = []
+        for j in range(len(col)-1):
+            X_added.append(col[j])
+            X_added.append((col[j] + col[j+1])/2)
+        X_added.append(col[-1])
+        X_plot.append(X_added)
+    X_plot = np.array(X_plot)
+    X_plot = X_plot.T
+    Y_plot, sigma = gp_model.predict(X_plot, return_std=True)
+    X_plot = scaler.inverse_transform(X_plot)
 
     # Plot the GPR
-    for i, col in enumerate(X.T):
+    for i, col in enumerate(X_plot.T):
         plt.figure(figsize=(10, 6))
-        plt.plot(col, Y, 'r.', markersize=10, label='Observed Data')
-        
-        # Sort predictions before plotting
         sorted_indices = np.argsort(col)  # Sort by the values in the current column of X
         X_sorted = col[sorted_indices]  # Sort the current column
-        Y_pred_sorted = Y_pred[sorted_indices]
-        
-        plt.plot(X_sorted, Y_pred_sorted, 'b-', label='GPR Predictions')
-        plt.fill_between(X_sorted, Y_pred_sorted - 1.96 * sigma, Y_pred_sorted + 1.96 * sigma,
+        Y_sorted = Y_plot[sorted_indices]
+        sigma = sigma[sorted_indices]
+        plt.plot(X.T[i], Y, 'r.', markersize=10, label='Observed Data')
+        plt.plot(X_sorted, Y_sorted, 'b-', label='GPR Predictions')
+        plt.fill_between(X_sorted, Y_sorted - 1.96 * sigma, Y_sorted + 1.96 * sigma,
                         alpha=0.2, color='blue', label='95% Confidence Interval')
         plt.title(f'Gaussian Process Regression Update for {parameter_names[i]}')
         plt.xlabel(f'{parameter_names[i]}')
         plt.ylabel('Rewards')
         plt.legend()
         plt.grid()
-        plt.savefig(f'{figure_path}/test/gpr_{parameter_names[i]}')
+        plt.savefig(f'{figure_path}/gpr_{parameter_names[i]}')
         plt.close()
     
     # Run Bayesian optimization to estimate the new parameter set
@@ -300,12 +320,7 @@ for year in range(start_learning_year, end_year+1):
     for idx, param in enumerate(velma_parameters.keys()):
         velma_parameters[param]['value'] = best_parameters[idx]
     parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
-    parameter_modifiers = [f'--kv="{param},{velma_parameters[param]["value"]}"' for param in velma_parameters]
-
-    # Print adjusted parameters for the next year
-    print(f"Updated parameters for year {year+1}:")
-    for param in velma_parameters.keys():
-        print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")       
+    parameter_modifiers = [f'--kv="{param},{velma_parameters[param]["value"]}"' for param in velma_parameters]  
 
     # Delete unnecessary data to save space
     if year > start_learning_year+2:
