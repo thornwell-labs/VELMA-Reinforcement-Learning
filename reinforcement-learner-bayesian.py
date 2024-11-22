@@ -10,13 +10,14 @@ from sklearn.gaussian_process.kernels import Matern, DotProduct, WhiteKernel
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
 import random
+from sklearn.inspection import permutation_importance
 
 
 # Define the required run parameters and directories
 start_year = 1987
 start_learning_year = 1991
 end_year = 2012
-allocated_memory = "-Xmx10G"
+allocated_memory = "-Xmx4G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
 working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
 xml_name = 'WA_Huge30m_18Nov2024'
@@ -301,6 +302,17 @@ for year in range(start_learning_year, end_year+1):
         plt.grid()
         plt.savefig(f'{figure_path}/gpr_{parameter_names[i]}')
         plt.close()
+        
+    # Permutation importance calculation
+    perm_importance = permutation_importance(gp_model, X_scaled, Y, n_repeats=30, random_state=42)
+
+    # Plot permutation importance
+    plt.figure(figsize=(10, 6))
+    plt.bar(parameter_names, perm_importance.importances_mean, yerr=perm_importance.importances_std)
+    plt.title("Permutation Importance")
+    plt.ylabel("Drop in R² Score")
+    plt.savefig(f'{figure_path}/permutation_importance')
+    plt.close()
     
     # Run Bayesian optimization to estimate the new parameter set
     result = gp_minimize(
