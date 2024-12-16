@@ -11,16 +11,17 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
 import random
 from sklearn.inspection import permutation_importance
+from copy import deepcopy
 
 
 # Define the required run parameters and directories
 start_year = 1987
 start_learning_year = 1991
-end_year = 2012
-allocated_memory = "-Xmx4G"
+end_year = 2021
+allocated_memory = "-Xmx10G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
 working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
-xml_name = 'WA_Huge30m_18Nov2024'
+xml_name = 'WA_Huge30m_12Dec2024'
 xml_path = f'{working_directory}/XML/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
@@ -29,7 +30,7 @@ figure_path = f'{results_folder_root}/Figures'
 velma_parallel = True
 epsilon = 0.2 # set the rate of random exploration here
 # default_results file contains starting NSE values for comparison
-default_results = f'{results_folder_root}/MULTI_WA_Huge30m_18Nov2024_default/Results_75524/AnnualHydrologyResults.csv'
+default_results = f'{results_folder_root}/MULTI_WA_Huge30m_12Dec2024_default/Results_75524/AnnualHydrologyResults.csv'
 # Required run parameters if velma_parallel is True
 outlet_id = '75524'
 max_processes = "6"
@@ -37,15 +38,15 @@ max_processes = "6"
 
 # Define starting and allowable VELMA parameter ranges
 velma_parameters = {
-    # '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
-    '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
-    '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
-    # '/soil/Lowland_Loam/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
-    # '/soil/LowlandLoam_Shallow/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
-    # '/soil/LowlandLoam_Deep/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
-    # '/soil/Lowland_Loam/surfaceKs': {'name': 'MediumKs','value': 891, 'min': 400, 'max': 2000},
-    # '/soil/LowlandLoam_Shallow/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
-    # '/soil/LowlandLoam_Deep/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
+    '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
+    # '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
+    # '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
+    '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
+    '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
+    '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
+    '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 891, 'min': 400, 'max': 2000},
+    '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
+    '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
     # Can add/remove parameters, but doing so necessitates manual changes to q-table and running-average table
 }
 
@@ -55,7 +56,18 @@ parameter_names = [velma_parameters[param]["name"] for param in velma_parameters
 parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
 
 # Formats parameters so they can modify the VELMA run
-parameter_modifiers = [f'--kv="{param}",{velma_parameters[param]["value"]}' for param in velma_parameters]
+extended_velma_parameters = velma_parameters.copy()
+# This section is only for modification of VELMA run parameters using extended soil types with C/N ratios
+soil_type_dict = {
+    'CN24': ['CN12', 'CN17'],
+}
+for soil_type, ratios in soil_type_dict.items():
+    for parameter in velma_parameters.keys():
+        if soil_type in parameter:
+            for ratio in ratios:
+                extended_velma_parameters[parameter.replace(soil_type, ratio)] = extended_velma_parameters[parameter]
+
+parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
 
 # Run VELMA for spin-up years and output data at end to a folder
 end_spinup_year = start_learning_year - 1
@@ -187,7 +199,7 @@ for year in range(start_learning_year, end_year+1):
         for idx, param in enumerate(velma_parameters.keys()):
             velma_parameters[param]['value'] = parameter_values[idx]
         # Formats parameters so they can modify the VELMA run
-        parameter_modifiers = [f'--kv="{param}",{velma_parameters[param]["value"]}' for param in velma_parameters]
+        parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
         
     # Print the parameter values, whether they were changed or not
     print(f"Values for {year} are:")
@@ -332,7 +344,7 @@ for year in range(start_learning_year, end_year+1):
     for idx, param in enumerate(velma_parameters.keys()):
         velma_parameters[param]['value'] = best_parameters[idx]
     parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
-    parameter_modifiers = [f'--kv="{param},{velma_parameters[param]["value"]}"' for param in velma_parameters]  
+    parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters]  
 
     # Delete unnecessary data to save space
     if year > start_learning_year+2:
