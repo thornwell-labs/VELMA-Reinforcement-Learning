@@ -11,7 +11,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
 import random
 from sklearn.inspection import permutation_importance
-from copy import deepcopy
 
 
 # Define the required run parameters and directories
@@ -55,7 +54,7 @@ parameter_names = [velma_parameters[param]["name"] for param in velma_parameters
 # List of parameter values for easy dataframe writing
 parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
 
-# Formats parameters so they can modify the VELMA run
+# Format parameters so they can modify the VELMA run
 extended_velma_parameters = velma_parameters.copy()
 # This section is only for modification of VELMA run parameters using extended soil types with C/N ratios
 soil_type_dict = {
@@ -347,8 +346,8 @@ for year in range(start_learning_year, end_year+1):
     parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters]  
 
     # Delete unnecessary data to save space
-    if year > start_learning_year+2:
-        shutil.rmtree(f'{results_folder_root}/Results_{str(year-2)}')
+    if year > start_learning_year:
+        shutil.rmtree(f'{results_folder_root}/Results_{str(year-1)}')
     if velma_parallel:
         shutil.rmtree(f'{results_folder_root}/MULTI_{xml_name}')
     else:
