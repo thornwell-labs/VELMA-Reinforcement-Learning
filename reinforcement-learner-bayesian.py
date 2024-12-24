@@ -14,40 +14,85 @@ from sklearn.inspection import permutation_importance
 
 
 # Define the required run parameters and directories
-start_year = 1987
-start_learning_year = 1991
-end_year = 2021
+start_year = 1990
+start_learning_year = 1992
+end_year = 2005
 allocated_memory = "-Xmx10G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
-working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
-xml_name = 'WA_Huge30m_12Dec2024'
-xml_path = f'{working_directory}/XML/{xml_name}.xml'
+working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/WS10'
+xml_name = 'OR_BR_ws10_10m_23Dec24'
+xml_path = f'{working_directory}/XMLs/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
-velma_parallel = True
+velma_parallel = False
 epsilon = 0.2 # set the rate of random exploration here
 # default_results file contains starting NSE values for comparison
-default_results = f'{results_folder_root}/MULTI_WA_Huge30m_12Dec2024_default/Results_75524/AnnualHydrologyResults.csv'
+default_results = f'{results_folder_root}/OR_BR_ws10_10m_23Dec24_default/AnnualHydrologyResults.csv'
 # Required run parameters if velma_parallel is True
 outlet_id = '75524'
 max_processes = "6"
 
-
 # Define starting and allowable VELMA parameter ranges
+# 'value' must match value used in default results
 velma_parameters = {
     '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
-    # '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
+    '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
     # '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
-    '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
-    '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
-    '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
-    '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 891, 'min': 400, 'max': 2000},
-    '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
-    '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
+    # '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
+    # '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
+    # '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
+    # '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 891, 'min': 400, 'max': 2000},
+    # '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
+    # '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
     # Can add/remove parameters, but doing so necessitates manual changes to q-table and running-average table
 }
+
+# Basic checks on the input directories
+for directory in [jar_path, working_directory, results_folder_root, xml_path, default_results]:
+    if not os.path.exists(directory):
+        print(f'FATAL WARNING: {directory} does not exist. Killing program. \nCheck directories and restart script.')
+        exit()
+if not os.path.exists(figure_path):
+    os.mkdir(figure_path)
+
+# Outdated file / folder cleaning
+if os.path.exists(f'{results_folder_root}/{xml_name}'):
+    print(f'FATAL WARNING: {results_folder_root}/{xml_name} already exists. Killing program. \nEither delete or rename this folder and then restart the script.')
+    exit()
+for year in [start_learning_year, end_year+1]:
+    if os.path.exists(f'{results_folder_root}/Results_{year}'):
+        shutil.rmtree(f'{results_folder_root}/Results_{year}')        
+
+# Function to build VELMA command and run as a sub-process
+def run_velma(parallel_flag, allocated_memory, jar_path, xml_path, start_year, end_year, end_data, parameter_modifiers, start_data=None, max_processes=1):
+    if parallel_flag:
+        command = ["java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaParallelCmdLine", xml_path,
+                  f"--maxProcesses={max_processes}",
+                  f'--kv="/calibration/VelmaInputs.properties/syear",{start_year}',
+                  f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName",{end_data}',
+                  *parameter_modifiers]
+        if start_data:
+            command.append(f'--kv="/startups/VelmaStartups.properties/setStartStateSpatialDataLocationName",{start_data}')
+        command_str = ' '.join(command)
+        try:
+            subprocess.run(command_str, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except:
+            raise RuntimeError(f"VELMA failed using command: {command_str}")
+    else:
+        command = ["java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaSimulatorCmdLine", xml_path,
+                   f'--kv="/calibration/VelmaInputs.properties/syear",{start_year}',
+                   f'--kv="/calibration/VelmaInputs.properties/eyear",{end_year}',
+                   f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName",{end_data}',
+                   *parameter_modifiers]
+        if start_data:
+            command.append(f'--kv="/startups/VelmaStartups.properties/setStartStateSpatialDataLocationName",{start_data}')
+        command_str = ' '.join(command)
+        try:
+            subprocess.run(command_str, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except:
+            raise RuntimeError(f"VELMA failed using command: {command_str}")
 
 parameter_names = [velma_parameters[param]["name"] for param in velma_parameters]
 
@@ -70,28 +115,13 @@ parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value
 
 # Run VELMA for spin-up years and output data at end to a folder
 end_spinup_year = start_learning_year - 1
-if os.path.exists(f'{results_folder_root}/Results_{end_spinup_year}'):
+end_data = f'{results_folder_root}/Results_{str(end_spinup_year)}'
+if os.path.exists(end_data):
     print(f"Accessing data from previous spin-up years.")
 else:
     print(f"Running spin-up years {start_year} to {end_spinup_year}.")
-    if velma_parallel:
-        command = ["java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaParallelCmdLine", xml_path,
-                f"--maxProcesses={max_processes}",
-                f'--kv="/calibration/VelmaInputs.properties/eyear",{end_spinup_year}',
-                f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName",'
-                f'{results_folder_root}/Results_{end_spinup_year}',
-                *parameter_modifiers]
-        command_str = ' '.join(command)
-        subprocess.run(command_str, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print('Spin-up years complete.')
-    else:
-        command = ["java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaSimulatorCmdLine", xml_path,
-                f'--kv="/calibration/VelmaInputs.properties/eyear",{end_spinup_year}',
-                f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName",'
-                f'{results_folder_root}/Results_{end_spinup_year}',
-                *parameter_modifiers]
-        command_str = ' '.join(command)
-        subprocess.run(command_str, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run_velma(velma_parallel, allocated_memory, jar_path, xml_path, start_year, end_spinup_year, end_data, parameter_modifiers, start_data=None, max_processes=max_processes)
+    print('Spin-up years complete.')
 
 # Initiate NSE using AnnualHydrologyResults
 if velma_parallel:
@@ -206,26 +236,7 @@ for year in range(start_learning_year, end_year+1):
         print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
 
     # Run VELMA for the current year
-    if velma_parallel:
-        command = [
-             "java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaParallelCmdLine", xml_path,
-             f"--maxProcesses={max_processes}", f'--kv="/calibration/VelmaInputs.properties/syear",{str(year)}',
-             f'--kv="/calibration/VelmaInputs.properties/eyear",{str(year+1)}',
-             f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName,{end_data}"',
-             f'--kv="/startups/VelmaStartups.properties/setStartStateSpatialDataLocationName,{start_data}"',
-             *parameter_modifiers]
-        command_str = ' '.join(command)
-        subprocess.run(command_str, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        command = [
-             "java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaSimulatorCmdLine", xml_path,
-             f'--kv="/calibration/VelmaInputs.properties/syear",{year}',
-             f'--kv="/calibration/VelmaInputs.properties/eyear",{year+1}',
-             f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName,{end_data}"',
-             f'--kv="/startups/VelmaStartups.properties/setStartStateSpatialDataLocationName,{start_data}"',
-             *parameter_modifiers]
-        command_str = ' '.join(command)
-        subprocess.run(command_str, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run_velma(velma_parallel, allocated_memory, jar_path, xml_path, year, year+1, end_data, parameter_modifiers, start_data, max_processes=max_processes)
 
     # Find NSE using AnnualHydrologyResults
     if velma_parallel:
