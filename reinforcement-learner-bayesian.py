@@ -14,38 +14,38 @@ from sklearn.inspection import permutation_importance
 
 
 # Define the required run parameters and directories
-start_year = 1990
-start_learning_year = 1992
-end_year = 2005
-allocated_memory = "-Xmx10G"
+start_year = 1987
+start_learning_year = 1990
+end_year = 2021
+allocated_memory = "-Xmx5G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
-working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/WS10'
-xml_name = 'OR_BR_ws10_10m_23Dec24'
-xml_path = f'{working_directory}/XMLs/{xml_name}.xml'
+working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Dungeness/Dungeness_Working'
+xml_name = 'WA_Dungeness_30m_16Dec2024'
+xml_path = f'{working_directory}/XML/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
-velma_parallel = False
+velma_parallel = True
 epsilon = 0.2 # set the rate of random exploration here
 # default_results file contains starting NSE values for comparison
-default_results = f'{results_folder_root}/OR_BR_ws10_10m_23Dec24_default/AnnualHydrologyResults.csv'
+default_results = f'{results_folder_root}/MULTI_WA_Dungeness_30m_16Dec2024_default/Results_618422/AnnualHydrologyResults.csv'
 # Required run parameters if velma_parallel is True
-outlet_id = '75524'
+outlet_id = '618422'
 max_processes = "6"
 
 # Define starting and allowable VELMA parameter ranges
 # 'value' must match value used in default results
 velma_parameters = {
     '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
-    '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
+    # '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
     # '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
-    # '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
-    # '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
-    # '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
-    # '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 891, 'min': 400, 'max': 2000},
-    # '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
-    # '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
+    '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
+    '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
+    '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
+    '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 1200, 'min': 400, 'max': 2000},
+    '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 400, 'max': 2000},
+    '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 400, 'max': 2000}
     # Can add/remove parameters, but doing so necessitates manual changes to q-table and running-average table
 }
 
@@ -61,7 +61,7 @@ if not os.path.exists(figure_path):
 if os.path.exists(f'{results_folder_root}/{xml_name}'):
     print(f'FATAL WARNING: {results_folder_root}/{xml_name} already exists. Killing program. \nEither delete or rename this folder and then restart the script.')
     exit()
-for year in [start_learning_year, end_year+1]:
+for year in [start_learning_year, end_year]:
     if os.path.exists(f'{results_folder_root}/Results_{year}'):
         shutil.rmtree(f'{results_folder_root}/Results_{year}')        
 
@@ -71,6 +71,7 @@ def run_velma(parallel_flag, allocated_memory, jar_path, xml_path, start_year, e
         command = ["java", allocated_memory, "-cp", jar_path, "gov.epa.velmasimulator.VelmaParallelCmdLine", xml_path,
                   f"--maxProcesses={max_processes}",
                   f'--kv="/calibration/VelmaInputs.properties/syear",{start_year}',
+                  f'--kv="/calibration/VelmaInputs.properties/eyear",{end_year}',
                   f'--kv="/startups/VelmaStartups.properties/setEndStateSpatialDataLocationName",{end_data}',
                   *parameter_modifiers]
         if start_data:
