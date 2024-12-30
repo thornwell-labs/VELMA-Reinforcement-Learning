@@ -61,9 +61,9 @@ if not os.path.exists(figure_path):
 if os.path.exists(f'{results_folder_root}/{xml_name}'):
     print(f'FATAL WARNING: {results_folder_root}/{xml_name} already exists. Killing program. \nEither delete or rename this folder and then restart the script.')
     exit()
-for year in [start_learning_year, end_year]:
+for year in range(start_learning_year, end_year):
     if os.path.exists(f'{results_folder_root}/Results_{year}'):
-        shutil.rmtree(f'{results_folder_root}/Results_{year}')        
+        shutil.rmtree(f'{results_folder_root}/Results_{year}')
 
 # Function to build VELMA command and run as a sub-process
 def run_velma(parallel_flag, allocated_memory, jar_path, xml_path, start_year, end_year, end_data, parameter_modifiers, start_data=None, max_processes=1):
