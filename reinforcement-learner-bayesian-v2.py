@@ -14,24 +14,24 @@ from sklearn.inspection import permutation_importance
 
 
 # Define the required run parameters and directories
-start_year = 1990  # Start the model spin-up from this year
+start_year = 1987  # Start the model spin-up from this year
 start_obs_data_year = 1990  # Enter the year the observed data starts from
-start_learning_year = 1992
-end_year = 2007
-allocated_memory = "-Xmx10G"
+start_learning_year = 1991
+end_year = 2021
+allocated_memory = "-Xmx5G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
-working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/WS10'
-xml_name = 'OR_BR_ws10_10m_23Dec24'
-xml_path = f'{working_directory}/XMLs/{xml_name}.xml'
+working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
+xml_name = 'WA_Huge30m_19Dec2024.xml'
+xml_path = f'{working_directory}/XML/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
 velma_parallel = False
 epsilon = 0.2 # set the rate of random exploration here
-default_results = f'{results_folder_root}/OR_BR_ws10_10m_23Dec24_default/DailyResults.csv'  # must be DailyResults.csv
+default_results = f'{results_folder_root}/MULTI_WA_Huge30m_19Dec2024_default/Results_75524/DailyResults.csv'  # must be DailyResults.csv
 calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must EXACTLY match a column in the DailyResults file
-observed_file = f'{working_directory}/DataInputs/m_7_Observed/Calibration/WS10_Streamflow_1990-2007.csv'
+observed_file = f'{working_directory}/Data_Inputs30m/m_7_Observed/USGS12073500_Huge_streamflow_1981_2021.csv'
 metric = 'nse'  # Valid options are 'nse' or 'r2'
 # Required run parameters if velma_parallel is True
 outlet_id = '75524'
@@ -42,7 +42,7 @@ max_processes = "6"
 velma_parameters = {
     '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
     '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
-    # '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
+    '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
     # '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
     # '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
     # '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
@@ -90,18 +90,18 @@ def results_interpreter(csv_path):
 
 # Ensure both dataframes are aligned and return data grouped by year
 def align_group_data(observed_df, results_df):
-    aligned = observed_df.join(results_df, lsuffix='_obs', rsuffix='_sim')
+    aligned = results_df.join(observed_df, lsuffix='_sim', rsuffix='_obs')
     aligned = aligned.dropna()
     grouped = aligned.groupby(aligned.index.year)
     for year, data in grouped:
-        if len(data) < 265:
-            print(f'WARNING: observed data in year {year} is missing many values.')
+        if len(data) < 315:
+            print(f'WARNING: observed data in year {year} is missing 50+ values.')
     return grouped
 
 # Functions to calculate NSE and R^2 of any grouped data and return as dictionary by year
 def calculate_nse(grouped_data):
     nse_by_year = {}
-    for year, data in default_data:
+    for year, data in grouped_data:
         obs = data[f'{calibration_data}_obs']
         sim = data[f'{calibration_data}_sim']
         numerator = np.sum((obs-sim) ** 2)
@@ -132,10 +132,10 @@ else:
     print(f'FATAL WARNING: {metric} is not valid. Killing program. \nEnter "nse" or "r2".')
     exit()
 
-metric_df = pd.DataFrame.from_dict(default_dict, orient='index', columns=[metric])
-metric_df.index.name = 'Year'
+default_df = pd.DataFrame.from_dict(default_dict, orient='index', columns=[metric])
+default_df.index.name = 'Year'
 output_file = f'default_{metric}.csv'
-metric_df.to_csv(f'{results_folder_root}/{output_file}')
+default_df.to_csv(f'{results_folder_root}/{output_file}')
 print(f'Successfully wrote default {metric} to file {results_folder_root}/{output_file}.')
 
 # Function to build VELMA command and run as a sub-process
@@ -197,7 +197,7 @@ else:
     run_velma(velma_parallel, allocated_memory, jar_path, xml_path, start_year, end_spinup_year, end_data, parameter_modifiers, start_data=None, max_processes=max_processes)
     print('Spin-up years complete.')
 
-# Calculate NSE using DailyResults.csv
+# Check for spinup folder and rename if necessary
 if velma_parallel:
     if not os.path.exists(f'{results_folder_root}/MULTI_{xml_name}_spinup'):
         os.rename(f'{results_folder_root}/MULTI_{xml_name}', f'{results_folder_root}/MULTI_{xml_name}_spinup')
@@ -213,18 +213,18 @@ else:
 results_df = results_interpreter(results_path)
 grouped = align_group_data(observed_df, results_df)
 if metric == 'nse':
-    metric_dict = calculate_nse(grouped)
+    results_dict = calculate_nse(grouped)
 elif metric == 'r2':
-    metric_dict = calculate_r2(grouped)
-print(f'End spin-up year had NSE = {metric_dict[end_spinup_year]}.')
+    results_dict = calculate_r2(grouped)
+print(f'End spin-up year had NSE = {results_dict[end_spinup_year]}.')
 
-def evaluate_model(eval_year, metric_dict=metric_dict, default_dict=default_dict):
+def evaluate_model(eval_year, metric_dict=results_dict, default_dict=default_dict):
     default_nse = default_dict[eval_year]
     eval_nse = metric_dict[eval_year]
     reward = eval_nse - default_nse
     return reward
 
-reward = evaluate_model(end_spinup_year)
+reward = evaluate_model(end_spinup_year, metric_dict=results_dict)
 
 # Initialize Q-table
 # Check whether the file exists so that old data isn't overwritten
@@ -233,7 +233,7 @@ if not os.path.isfile(q_table_output):
     q_table.to_csv(q_table_output, mode='w', index=False)
 else:
     q_table = pd.read_csv(q_table_output)
-q_table.loc[len(q_table)] = parameter_values + [reward, metric_dict[end_spinup_year], end_spinup_year]
+q_table.loc[len(q_table)] = parameter_values + [reward, results_dict[end_spinup_year], end_spinup_year]
 q_table.loc[[len(q_table)-1]].to_csv(q_table_output, mode='a', header=False, index=False)
 print('Q-table initialized.')
 
@@ -242,8 +242,8 @@ print('Q-table initialized.')
 if os.path.isfile(running_average_output):
     running_average = pd.read_csv(running_average_output)
 else:
-    running_average = pd.DataFrame(columns=list(velma_parameters.keys())+['Average_Reward'])
-    running_average.loc[0] = parameter_values + [reward]
+    running_average = pd.DataFrame(columns=list(velma_parameters.keys())+['Average_Reward']+['Data_Points'])
+    running_average.loc[0] = parameter_values + [reward] + [1]
     running_average.to_csv(running_average_output, index=False)
 
 print('Average reward table initialized.')
@@ -252,7 +252,7 @@ print('Average reward table initialized.')
 # Check whether the current parameter bounds or the min/max in the data should be used for scaling
 scaler = MinMaxScaler()
 param_bounds = ([[velma_parameters[param]['min'], velma_parameters[param]['max']] for param in velma_parameters])
-X = running_average.iloc[:, :-1].values
+X = running_average.iloc[:, :-2].values
 X_min = X.min(axis=0).tolist()
 X_max = X.max(axis=0).tolist()
 param_space = []
@@ -319,14 +319,14 @@ for year in range(start_learning_year, end_year+1):
     results_df = results_interpreter(results_path)
     grouped = align_group_data(observed_df, results_df)
     if metric == 'nse':
-        metric_dict = calculate_nse(grouped)
+        results_dict = calculate_nse(grouped)
     elif metric == 'r2':
-        metric_dict = calculate_r2(grouped)
-    metric_value = metric_dict[year]
+        results_dict = calculate_r2(grouped)
+    metric_value = results_dict[year]
     print(f'{year} had {metric} = {round(metric_value, 2)}.')
     
     # Calculate reward
-    reward = evaluate_model(year, metric_dict=metric_dict)
+    reward = evaluate_model(year, metric_dict=results_dict)
     print(f"Reward for {year} was {round(reward, 3)}.")
 
     # Update the Q-table
@@ -339,6 +339,7 @@ for year in range(start_learning_year, end_year+1):
     if not matching_rows.empty:
         # Calculate the average of the 'Reward' column in matching rows
         mean_reward = matching_rows['Reward'].mean()
+        number_points = len(matching_rows)
         
         # Check if the parameter_values row already exists in running_average
         existing_row_mask = (running_average.iloc[:, :len(parameter_values)].eq(parameter_values).all(axis=1))
@@ -347,16 +348,17 @@ for year in range(start_learning_year, end_year+1):
             # Update the existing row with the new Average_NSE
             row_index = existing_row_mask.idxmax()  # Get the index of the first matching row
             running_average.at[row_index, 'Average_Reward'] = mean_reward
+            running_average.at[row_index, 'Data_Points'] = number_points
         else:
             # Create a new row for the running average
-            new_row = parameter_values + [mean_reward]
+            new_row = parameter_values + [mean_reward] + [1]
             running_average.loc[len(running_average)] = new_row
 
     # Save the running_averages to a .csv
     running_average.to_csv(running_average_output, index=False)
 
     # Update GPR model with new data
-    X = running_average.iloc[:, :-1].values
+    X = running_average.iloc[:, :-2].values
     X_scaled = scaler.transform(X)
     Y = running_average['Average_Reward'].values
     gp_model.fit(X_scaled, Y)
