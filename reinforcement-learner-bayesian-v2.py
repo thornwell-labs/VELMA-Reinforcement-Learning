@@ -15,19 +15,19 @@ from sklearn.inspection import permutation_importance
 
 # Define the required run parameters and directories
 start_year = 1987  # Start the model spin-up from this year
-start_obs_data_year = 1990  # Enter the year the observed data starts from
+start_obs_data_year = 1981  # Enter the year the observed data starts from (be sure to check the observed data file)
 start_learning_year = 1991
 end_year = 2021
 allocated_memory = "-Xmx5G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
 working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
-xml_name = 'WA_Huge30m_19Dec2024.xml'
+xml_name = 'WA_Huge30m_19Dec2024'
 xml_path = f'{working_directory}/XML/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
-velma_parallel = False
+velma_parallel = True
 epsilon = 0.2 # set the rate of random exploration here
 default_results = f'{results_folder_root}/MULTI_WA_Huge30m_19Dec2024_default/Results_75524/DailyResults.csv'  # must be DailyResults.csv
 calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must EXACTLY match a column in the DailyResults file
@@ -309,7 +309,7 @@ for year in range(start_learning_year, end_year+1):
         print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
 
     # Run VELMA for the current year
-    run_velma(velma_parallel, allocated_memory, jar_path, xml_path, year, year+1, end_data, parameter_modifiers, start_data, max_processes=max_processes)
+    run_velma(velma_parallel, allocated_memory, jar_path, xml_path, year-1, year, end_data, parameter_modifiers, start_data, max_processes=max_processes)
     if velma_parallel:
         results_path = f'{results_folder_root}/MULTI_{xml_name}/Results_{outlet_id}/DailyResults.csv'
     else:
