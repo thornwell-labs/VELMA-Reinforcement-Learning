@@ -71,7 +71,7 @@ for year in range(start_learning_year, end_year+1):
         shutil.rmtree(f'{results_folder_root}/Results_{year}')
 
 # Read in the observed data and assign an index by date
-observed_df = pd.read_csv(observed_file, header=None, names=[calibration_data])
+observed_df = pd.read_csv(observed_file, usecols=[0], header=None, names=[calibration_data])
 start_date = f'1/1/{start_obs_data_year}'
 date_range = pd.date_range(start=start_date, periods=len(observed_df), freq='D')
 observed_df['Date'] = date_range
