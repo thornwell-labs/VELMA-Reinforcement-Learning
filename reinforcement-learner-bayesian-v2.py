@@ -13,26 +13,26 @@ import random
 from sklearn.inspection import permutation_importance
 
 
-# Define the required run parameters and directories
+# Carefully define the required run parameters and directories
 start_year = 1987  # Start the model spin-up from this year
-start_obs_data_year = 1981  # Enter the year the observed data starts from (be sure to check the observed data file)
 start_learning_year = 1991
 end_year = 2021
 allocated_memory = "-Xmx5G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
 working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
-xml_name = 'WA_Huge30m_19Dec2024'
+xml_name = 'WA_Huge30m_19Dec2024'  # Do not include .xml extension in this name
 xml_path = f'{working_directory}/XML/{xml_name}.xml'
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
-velma_parallel = True
 epsilon = 0.2 # set the rate of random exploration here
 default_results = f'{results_folder_root}/MULTI_WA_Huge30m_19Dec2024_default/Results_75524/DailyResults.csv'  # must be DailyResults.csv
 calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must EXACTLY match a column in the DailyResults file
+start_obs_data_year = 1981  # Enter the year the observed data starts from (be sure to check the observed data file)
 observed_file = f'{working_directory}/Data_Inputs30m/m_7_Observed/USGS12073500_Huge_streamflow_1981_2021.csv'
 metric = 'nse'  # Valid options are 'nse' or 'r2'
+velma_parallel = True
 # Required run parameters if velma_parallel is True
 outlet_id = '75524'
 max_processes = "6"
