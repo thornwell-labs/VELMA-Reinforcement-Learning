@@ -41,8 +41,12 @@ max_processes = "6"
 # 'value' must match value used in default results
 velma_parameters = {
     '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0, 'min': 0.0, 'max': 0.15},
-    '/calibration/VelmaCalibration.properties/f_ksv': {'name': 'VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
-    '/calibration/VelmaCalibration.properties/f_ksl': {'name': 'LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
+    'soil/Medium_CN24/ksVerticalExponentialDecayFactor': {'name': 'Medium VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
+    '/soil/Shallow_CN24/ksVerticalExponentialDecayFactor': {'name': 'Shallow VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
+    '/soil/Deep_CN24/ksVerticalExponentialDecayFactor': {'name': 'Deep VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
+    'soil/Medium_CN24/ksLateralExponentialDecayFactor': {'name': 'Medium LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
+    '/soil/Shallow_CN24/ksLateralExponentialDecayFactor': {'name': 'Shallow LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
+    '/soil/Deep_CN24/ksLateralExponentialDecayFactor': {'name': 'Deep LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
     # '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
     # '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
     # '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1530, 'min': 1300, 'max': 3000},
