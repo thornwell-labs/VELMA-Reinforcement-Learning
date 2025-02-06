@@ -16,7 +16,9 @@ from sklearn.inspection import permutation_importance
 # Carefully define the following required run parameters and directories
 start_year = 2007  # Start the model spin-up from this year
 calibration_year = 2011  # Loop over this year for calibration
-n_loops = 20  # Run the calibration process this many times
+auto_determine_loops = True  # if True, automatically determines the number of required loops based on the number of variables
+if auto_determine_loops == False:
+    n_loops = 20  # optional: manually set the number of loops
 allocated_memory = "-Xmx4G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v003.jar"
 working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
@@ -26,7 +28,6 @@ results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
-epsilon = 0.2 # set the rate of random exploration here
 default_path = f'{results_folder_root}/MULTI_WA_Huge30m_2Jan2024b_default/Results_75524/DailyResults.csv'  # must be DailyResults.csv
 calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must EXACTLY match a column in the DailyResults file
 start_obs_data_year = 1981  # Enter the year the observed data starts from (be sure to check the observed data file)
@@ -347,23 +348,24 @@ def objective(parameters):
     predicted_reward = gp_model.predict([parameters])[0]
     return -predicted_reward
 
+if auto_determine_loops == True:
+    n_loops = (3*len(velma_parameters) - len(running_average)) + 6
+
 # Run the below code in a loop for the rest of the years
 for i in range(1, n_loops+1):
     year = calibration_year
     print(f"Running VELMA for loop {i}/{n_loops}")
 
     # If there are less than (3 * #parameters) unique data points, force random exploration of the parameter space
-    # There's a probability (epsilon) of further exploration of the parameter space
-    if len(running_average) < 3*len(velma_parameters) or random.random() < epsilon:
-        if len(running_average) < 3*len(velma_parameters):
-            print("Q-table is too sparse.")
-        print(f"Forcing random exploration of parameter space.")    
-        parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
-                            for param in velma_parameters]
-        for idx, param in enumerate(velma_parameters.keys()):
-            velma_parameters[param]['value'] = parameter_values[idx]
-        # Formats parameters so they can modify the VELMA run
-        parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
+    if len(running_average) < 3*len(velma_parameters):
+        print("Q-table is too sparse.")
+    print(f"Forcing random exploration of parameter space.")    
+    parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
+                        for param in velma_parameters]
+    for idx, param in enumerate(velma_parameters.keys()):
+        velma_parameters[param]['value'] = parameter_values[idx]
+    # Formats parameters so they can modify the VELMA run
+    parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
         
     # Print the parameter values, whether they were changed or not
     print(f"Values are:")
