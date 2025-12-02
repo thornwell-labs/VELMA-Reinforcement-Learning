@@ -1,6 +1,5 @@
 """
 Main file
-Contains set-up information
 """
 
 import pandas as pd
@@ -8,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import shutil
-from skopt import gp_minimize
+from scipy.optimize import differential_evolution
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, DotProduct, WhiteKernel
 from sklearn.preprocessing import MinMaxScaler
@@ -21,26 +20,33 @@ from resample import resample_xml
 from divide_catchments import divide_catchments
 import xml.etree.ElementTree as ET
 
-
 # Carefully define the following required run parameters and directories
 start_year = 1987  # Start the model spin-up from this year
 start_learning_year = 1991
 end_year = 2021
 allocated_memory = "-Xmx4G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v009.jar"
-working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Huge'
-xml_name = 'WA_Huge30m_8Jul2025'  # Do not include .xml extension in this name
-xml_path = f'{working_directory}/XML/{xml_name}.xml'
+working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Juanita'
+xml_name = 'WA_Juanita30m_1Dec2025'  # Do not include .xml extension in this name
+xml_path = f'{working_directory}/XML/{xml_name}.xml'  # Set up your working directory so this line is true
 results_folder_root = f'{working_directory}/Results'
 q_table_output = f'{results_folder_root}/q-table.csv'
 running_average_output = f'{results_folder_root}/running-averages.csv'
 figure_path = f'{results_folder_root}/Figures'
-epsilon = 0.5 # set the rate of random exploration here
-default_path = f'{results_folder_root}/MULTI_WA_Huge30m_8Jul2025_Hyak/Results_75524/DailyResults.csv'  # must be DailyResults.csv1
-calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must EXACTLY match a column in the DailyResults file
-start_obs_data_year = 1981  # Enter the year the observed data starts from (be sure to check the observed data file)
-observed_file = f'{working_directory}/Data_Inputs30m/m_7_Observed/USGS12073500_Huge_streamflow_1981_2021.csv'
+default_path = f'{results_folder_root}/MULTI_WA_Juanita30m_1Dec2025/Results_27645/DailyResults.csv'  # must be DailyResults.csv
+calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must exactly match a column name in the DailyResults file
+start_obs_data_year = 1987  # Enter the year the observed data starts from (be sure to check the observed data file)
+observed_file = f'{working_directory}/Data_Inputs30m/m_7_Observed/Juanita_observed_streamflow_1987-2021.csv'
 
+
+# Specify number of model years that constitute a data point and desired number of total data points
+n_years_per_point = 1
+n_data_points = 50
+
+# Specify number of data points in initial exploration period and rate of exploration
+# Recommend the initial exploration period should be at least (3 * number of parameters)
+n_initial_exploration = 21
+epsilon = 0.2
 
 # Specify the following weights for Aggregate Performance Efficiency Statistic (APES)
 soar_weight = 0.5
@@ -51,9 +57,9 @@ r2_weight = 0.2
 # Specify downscaling and VELMA parallel parameters
 velma_parallel = True
 max_processes = "3"
-outlet_id = '75524'
+outlet_id = '27645'
 downscaling = True
-downscaling_factor = 9
+downscaling_factor = 3
 
 if velma_parallel == True and downscaling == True:
     divide_catchments_flag = True
@@ -63,19 +69,19 @@ if velma_parallel == True and downscaling == True:
 # Define starting and allowable VELMA parameter ranges in this dictionary
 # 'value' must match value used in default results
 velma_parameters = {
-    '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0.095, 'min': 0.0, 'max': 0.20},
+    '/calibration/VelmaCalibration.properties/setGroundwaterStorageFraction': {'name': 'GroundwaterStorageFraction','value': 0.0, 'min': 0.0, 'max': 0.20},
     # 'soil/Medium_CN24/ksVerticalExponentialDecayFactor': {'name': 'Medium VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
     # '/soil/Shallow_CN24/ksVerticalExponentialDecayFactor': {'name': 'Shallow VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
     # '/soil/Deep_CN24/ksVerticalExponentialDecayFactor': {'name': 'Deep VerticalKs', 'value': 0.0013, 'min': 0.001, 'max': 0.002},
     # 'soil/Medium_CN24/ksLateralExponentialDecayFactor': {'name': 'Medium LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
     # '/soil/Shallow_CN24/ksLateralExponentialDecayFactor': {'name': 'Shallow LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
     # '/soil/Deep_CN24/ksLateralExponentialDecayFactor': {'name': 'Deep LateralKs', 'value': 0.00155, 'min': 0.001, 'max': 0.002},
-    '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1300, 'min': 1300, 'max': 2000},
-    '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 925, 'min': 470, 'max': 1300},
-    '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1726, 'min': 2000, 'max': 4000},
-    '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 746, 'min': 200, 'max': 1800},
-    '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1144, 'min': 200, 'max': 1800},
-    '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 569, 'min': 200, 'max': 1800}
+    '/soil/Medium_CN24/soilColumnDepth': {'name': 'MediumSoilDepth','value': 1080, 'min': 1080, 'max': 1300},
+    '/soil/Shallow_CN24/soilColumnDepth': {'name': 'ShallowSoilDepth','value': 470, 'min': 470, 'max': 1080},
+    '/soil/Deep_CN24/soilColumnDepth': {'name': 'DeepSoilDepth','value': 1300, 'min': 1300, 'max': 3000},
+    '/soil/Medium_CN24/surfaceKs': {'name': 'MediumKs','value': 1200, 'min': 200, 'max': 1800},
+    '/soil/Shallow_CN24/surfaceKs': {'name': 'ShallowKs','value': 1200, 'min': 200, 'max': 1800},
+    '/soil/Deep_CN24/surfaceKs': {'name': 'DeepKs','value': 1200, 'min': 200, 'max': 1800}
     # Can add/remove parameters
 }
 
@@ -83,34 +89,42 @@ velma_parameters = {
 
 
 # If downscaling_flag is True, perform downscaling and grab the new xml name
-if downscaling == True:       
-    print('Performing downscaling.')
-    new_xml = resample_xml(xml_path, 'resampled', downscale_factor=downscaling_factor, plot_dem=False, overwrite=True, plot_hist=False, weights=None, change_disturbance_fraction=True)
-    # If velma_parallel is also True, divide catchments and add the outlet list to the xml
-    if velma_parallel == True:
-        print('Performing catchment division.')
-        # Find the input DEM path and the input X/Y
+if downscaling == True:
+    xml_path = f'{working_directory}/XML/{xml_name}_resampled_{downscaling_factor}.xml'
+    xml_name = xml_name+f'_resampled_{downscaling_factor}'
+    if not os.path.exists(xml_path):
+        print('Performing downscaling.')
+        new_xml = resample_xml(xml_path, 'resampled', downscale_factor=downscaling_factor, plot_dem=False, overwrite=True, plot_hist=False, weights=None, change_disturbance_fraction=True)
         tree = ET.parse(new_xml)
-        root = tree.getroot()
-        input_props = root.find(".//VelmaInputs.properties")
-        startup_props = root.find(".//VelmaStartups.properties")
-        input_root_name = startup_props.find("inputDataLocationRootName").text.strip()
-        input_dir_name  = startup_props.find("inputDataLocationDirName").text.strip()
-        dem_path = input_props.find("input_dem").text.strip()
-        # strip leading './' so the join works cleanly
-        dem_path = dem_path.lstrip("./\\")
-        asc_file_path = os.path.join(input_root_name, input_dir_name, dem_path)
-        asc_file_path = os.path.normpath(asc_file_path)
-        col = int(input_props.find("outx").text.strip())
-        row = int(input_props.find("outy").text.strip())
+        new_downscaled_file = True
+    else:
+        print('Accessing previous downscaled model version.')
+        new_downscaled_file = False
+        tree = ET.parse(xml_path)
+    
+    root = tree.getroot()
+    input_props = root.find(".//VelmaInputs.properties")
+    startup_props = root.find(".//VelmaStartups.properties")
+    input_root_name = startup_props.find("inputDataLocationRootName").text.strip()
+    input_dir_name  = startup_props.find("inputDataLocationDirName").text.strip()
+    dem_path = input_props.find("input_dem").text.strip()
+    # strip leading './' so the join works cleanly
+    dem_path = dem_path.lstrip("./\\")
+    asc_file_path = os.path.join(input_root_name, input_dir_name, dem_path)
+    asc_file_path = os.path.normpath(asc_file_path)
+    col = int(input_props.find("outx").text.strip())
+    row = int(input_props.find("outy").text.strip())
+    
+    # If velma_parallel is also True, divide catchments and add the outlet list to the xml
+    if velma_parallel == True and new_downscaled_file == True:
+        print('Performing catchment division.')
         new_outlets = divide_catchments(asc_file_path, col, row, num_processors=int(max_processes), num_subbasins=number_catchments, method='equal', crs=crs, is_plot=False)
         # Replace the reach outlet list with the new outlet list
         input_props.find("initialReachOutlets").text = " ".join(map(str, new_outlets))
-        xml_name = input_props.find("run_index").text+f"_resampled_{downscaling_factor}"
         input_props.find("run_index").text = xml_name
         tree.write(new_xml)
-    # Replace the xml path and the outlet_id with downscaled versions
-    xml_path = new_xml
+    
+    # Update the outlet ID with the downscaled version
     new_outlet = row_col_to_index(asc_file_path, row, col)
     outlet_id = str(new_outlet)
 
@@ -143,7 +157,7 @@ weights = [nse_weight, r2_weight, summer_soar_weight, soar_weight]
 
 # Compare observed data with baseline results and create dataframes that contain APES metrics by year
 default_df = results_interpreter(default_path, calibration_data)
-default_data = align_group_data(observed_df, default_df, calibration_data)
+default_data = align_group_data(observed_df, default_df)
 default_nse_dict = calculate_nse(default_data, calibration_data)
 default_r2_dict = calculate_r2(default_data, calibration_data)
 default_soar_summer_dict = calculate_soar_summer(default_data, calibration_data)
@@ -164,6 +178,7 @@ parameter_values = [velma_parameters[param]["value"] for param in velma_paramete
 
 # Format parameters so they can modify the VELMA run
 extended_velma_parameters = velma_parameters.copy()
+
 # This section is only for modification of VELMA run parameters using extended soil types with C/N ratios
 soil_type_dict = {
     'CN24': ['CN12', 'CN17'],
@@ -198,9 +213,9 @@ if velma_parallel:
 else:
     results_path = f'{results_folder_root}/{xml_name}_spinup/DailyResults.csv'
 
-# Calculate metrics by year for the simulated results - need to end up with a list of dictionaries
+# Calculate metrics by year for the simulated results - end up with a list of dictionaries
 results_df = results_interpreter(results_path, calibration_data)
-simulated_data = align_group_data(observed_df, results_df, calibration_data)
+simulated_data = align_group_data(observed_df, results_df)
 results_nse_dict = calculate_nse(simulated_data, calibration_data)
 results_r2_dict = calculate_r2(simulated_data, calibration_data)
 results_soar_summer_dict = calculate_soar_summer(simulated_data, calibration_data)
@@ -208,7 +223,7 @@ results_soar_dict = calculate_soar(simulated_data, calibration_data)
 results = [results_nse_dict, results_r2_dict, results_soar_summer_dict, results_soar_dict]
 
 # Calculate APES score
-apes_score = calculate_apes(year=end_spinup_year, results=results, weights=weights)
+apes_score = calculate_apes(years=[end_spinup_year], results=results, weights=weights)
 
 print(f'End spin-up year had NSE = {results_nse_dict[end_spinup_year]}, '
       f'R^2 = {results_r2_dict[end_spinup_year]}, '
@@ -229,11 +244,11 @@ reward = evaluate_model(end_spinup_year, results=results, default_results=defaul
 # Initialize Q-table
 # Check whether the file exists so that old data isn't overwritten
 if not os.path.isfile(q_table_output):
-    q_table = pd.DataFrame(columns=list(velma_parameters.keys())+['Reward', 'APES_Score', 'Year'])
+    q_table = pd.DataFrame(columns=list(velma_parameters.keys())+['Reward', 'APES_Score'])
     q_table.to_csv(q_table_output, mode='w', index=False)
 else:
     q_table = pd.read_csv(q_table_output)
-q_table.loc[len(q_table)] = parameter_values + [reward, apes_score, end_spinup_year]
+q_table.loc[len(q_table)] = parameter_values + [reward, apes_score]
 q_table.loc[[len(q_table)-1]].to_csv(q_table_output, mode='a', header=False, index=False)
 print('Q-table initialized.')
 
@@ -248,11 +263,11 @@ else:
 
 print('Average reward table initialized.')
 
-# Scale the data for use in GPR and Bayesian optimization
+# Scale the data for use in GPR
 # Check whether the current parameter bounds or the min/max in the data should be used for scaling
 scaler = MinMaxScaler()
 param_bounds = ([[velma_parameters[param]['min'], velma_parameters[param]['max']] for param in velma_parameters])
-X = running_average.iloc[:, :-2].values
+X = q_table.iloc[:, :-2].values
 X_min = X.min(axis=0).tolist()
 X_max = X.max(axis=0).tolist()
 param_space = []
@@ -273,7 +288,7 @@ param_space = [(bound[0], bound[1]) for bound in param_space]
 X_scaled = scaler.transform(X)
 
 # Gaussian Process Regression (surrogate model)
-Y = running_average['Average_Reward'].values
+Y = q_table['Reward'].values
 kernel = DotProduct(sigma_0_bounds=(1e-20, 1e5)) + Matern(length_scale_bounds=(1e-12, 100)) + WhiteKernel(noise_level=1)
 gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=200)
 gp_model = gp_model.fit(X_scaled, Y)
@@ -282,18 +297,32 @@ def objective(parameters):
     predicted_reward = gp_model.predict([parameters])[0]
     return -predicted_reward
 
-# Run the below code in a loop for the rest of the years
-for year in range(start_learning_year, end_year+1):
-    print(f"Running VELMA for year: {year}")
+# Run the below code in a loop to collect all data points
+for point in range(1, n_data_points+1):
+    if year+n_years_per_point > end_year:
+        'Re-starting model.'
+        year = start_learning_year
+        
+    print(f"Collecting data point number {point} out of {n_data_points}.")
+    
+    # Delete working results
+    if velma_parallel:
+        if os.path.exists(f'{results_folder_root}/MULTI_{xml_name}'):
+            shutil.rmtree(f'{results_folder_root}/MULTI_{xml_name}')
+    else:
+        if os.path.exists(f'{results_folder_root}/{xml_name}'):
+            shutil.rmtree(f'{results_folder_root}/{xml_name}')    
 
     # Locations of folders for start data and end data
     start_data = f'{results_folder_root}/Results_{str(year - 1)}'
-    end_data = f'{results_folder_root}/Results_{str(year)}'
+    end_data = f'{results_folder_root}/Results_{str(year+n_years_per_point-1)}'
+    if os.path.exists(end_data):
+        shutil.rmtree(end_data)    
     
-    # If there are less than (3 * #parameters) unique data points, force random exploration of the parameter space
+    # If initial data collection is not complete, force random exploration of the parameter space
     # There's a probability (epsilon) of further exploration of the parameter space
-    if len(running_average) < 3*len(velma_parameters) or random.random() < epsilon:
-        if len(running_average) < 3*len(velma_parameters):
+    if len(q_table) < n_initial_exploration or random.random() < epsilon:
+        if len(q_table) < n_initial_exploration:
             print("Q-table is too sparse.")
         print(f"Forcing random exploration of parameter space.")    
         parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
@@ -304,26 +333,44 @@ for year in range(start_learning_year, end_year+1):
         parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
         
     # Print the parameter values, whether they were changed or not
-    print(f"Values for {year} are:")
+    print(f"Values for {year} to {year+n_years_per_point-1} are:")
     for param in velma_parameters.keys():
         print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
 
-    # Run VELMA for the current year
-    run_velma(velma_parallel, allocated_memory, jar_path, xml_path, year, year, end_data, parameter_modifiers, start_data, max_processes=max_processes)
+    # Run VELMA for the current data point
+    run_velma(velma_parallel, allocated_memory, jar_path, xml_path, year, year+n_years_per_point-1, end_data, parameter_modifiers, start_data, max_processes=max_processes)
     if velma_parallel:
         results_path = f'{results_folder_root}/MULTI_{xml_name}/Results_{outlet_id}/DailyResults.csv'
     else:
         results_path = f'{results_folder_root}/{xml_name}/DailyResults.csv'
+        
+    # Delete unnecessary data to save space
+    if year > start_learning_year:
+        shutil.rmtree(start_data)
 
     # Calculate metric by year for the simulated results
     results_df = results_interpreter(results_path, calibration_data)
-    simulated_data = align_group_data(observed_df, results_df, calibration_data)
+    simulated_data = align_group_data(observed_df, results_df)
+    
+    # If there is no observed data in these year(s), need to re-run the model
+    if len(simulated_data) == 0:
+        print(f'The year(s) {year} to {year+n_years_per_point-1} had no observed data. Re-running model without updated parameters.')
+        year = year + n_years_per_point
+        continue
+    
     results_nse_dict = calculate_nse(simulated_data, calibration_data)
     results_r2_dict = calculate_r2(simulated_data, calibration_data)
     results_soar_summer_dict = calculate_soar_summer(simulated_data, calibration_data)
     results_soar_dict = calculate_soar(simulated_data, calibration_data)
     results = [results_nse_dict, results_r2_dict, results_soar_summer_dict, results_soar_dict]
-    apes_score = calculate_apes(year, results=results, weights=weights)
+    apes_score = calculate_apes(years=[year], results=results, weights=weights)
+    
+    # If APES score is missing for any other reason (for example, no summertime data), need to re-run the model
+    if np.isnan(apes_score):
+        print(f'The year(s) {year} to {year+n_years_per_point-1} did not have a valid APES score. Re-running model without updated parameters.')
+        year = year + n_years_per_point
+        continue
+
     print(f'{year} had APES score = {round(apes_score, 2)}.')
     
     # Update the APES score spreadsheet
@@ -334,10 +381,10 @@ for year in range(start_learning_year, end_year+1):
     
     # Calculate reward
     reward = evaluate_model(year, results=results, default_results=default_results, weights=weights)
-    print(f"Reward for {year} was {round(reward, 3)}.")
+    print(f"Reward for {year} to {year+n_years_per_point-1} was {round(reward, 3)}.")
 
     # Update the Q-table
-    q_table.loc[len(q_table)] = parameter_values + [reward, apes_score, year]
+    q_table.loc[len(q_table)] = parameter_values + [reward, apes_score]
     q_table.loc[[len(q_table)-1]].to_csv(q_table_output, mode='a', header=False, index=False)
     
     # Update the running average table
@@ -352,7 +399,7 @@ for year in range(start_learning_year, end_year+1):
         existing_row_mask = (running_average.iloc[:, :len(parameter_values)].eq(parameter_values).all(axis=1))
 
         if existing_row_mask.any():
-            # Update the existing row with the new Average_NSE
+            # Update the existing row with the new average reward
             row_index = existing_row_mask.idxmax()  # Get the index of the first matching row
             running_average.at[row_index, 'Average_Reward'] = mean_reward
             running_average.at[row_index, 'Data_Points'] = number_points
@@ -419,33 +466,31 @@ for year in range(start_learning_year, end_year+1):
     plt.savefig(f'{figure_path}/permutation_importance')
     plt.close()
     
-    # Run Bayesian optimization to estimate the new parameter set
-    result = gp_minimize(
+    # Run differential evolution to estimate the new parameter set
+    result = differential_evolution(
         func=objective,
-        dimensions=param_space,
-        x0=[list(row) for row in X_scaled],  # Past parameter sets
-        y0=-Y,  # Rewards (use numpy to turn negative because using minimization)
-        n_calls=30,
-        acq_func='EI',
+        bounds=param_space,
+        maxiter=100,
+        popsize=15,
+        tol=1e-6,
+        mutation=(0.5, 1.0),
+        recombination=0.5,
+        seed=42,
+        polish=True,
+        disp=False,
     )
-    
     best_scaled_params = result.x
-    best_parameters = scaler.inverse_transform([best_scaled_params])[0]
+    best_parameters = scaler.inverse_transform([best_scaled_params])[0].tolist()
+
     best_parameters = [round(param, 5) for param in best_parameters]
 
     # Update VELMA parameters for the next run
     for idx, param in enumerate(velma_parameters.keys()):
         velma_parameters[param]['value'] = best_parameters[idx]
     parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
-    parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters]  
+    parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters] 
 
-    # Delete unnecessary data to save space
-    if year > start_learning_year:
-        shutil.rmtree(f'{results_folder_root}/Results_{str(year-1)}')
-    if velma_parallel:
-        shutil.rmtree(f'{results_folder_root}/MULTI_{xml_name}')
-    else:
-        shutil.rmtree(f'{results_folder_root}/{xml_name}')
+    year = year + n_years_per_point
         
 print("Calibration process completed!")
 print("Best predicted parameters:")
