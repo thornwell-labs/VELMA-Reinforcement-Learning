@@ -15,37 +15,37 @@ from sklearn.metrics import r2_score
 import random
 from sklearn.inspection import permutation_importance
 from rls_functions import results_interpreter, align_group_data, calculate_apes, calculate_nse, \
-calculate_r2, calculate_soar, calculate_soar_summer, evaluate_model, run_velma, row_col_to_index
+calculate_r2, calculate_soar, calculate_soar_summer, evaluate_model, run_velma, row_col_to_index, \
+log_message, log_with_timestamp, start_timer, elapsed_time
 from resample import resample_xml
 from divide_catchments import divide_catchments
 import xml.etree.ElementTree as ET
+import pickle
 
 # Carefully define the following required run parameters and directories
 start_year = 1987  # Start the model spin-up from this year
-start_learning_year = 1991
+start_learning_year = 1991  # Start model calibration from this year
 end_year = 2021
-allocated_memory = "-Xmx4G"
+allocated_memory = "-Xmx2G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v009.jar"
 working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Juanita'
 xml_name = 'WA_Juanita30m_1Dec2025'  # Do not include .xml extension in this name
-xml_path = f'{working_directory}/XML/{xml_name}.xml'  # Set up your working directory so this line is true
-results_folder_root = f'{working_directory}/Results'
-q_table_output = f'{results_folder_root}/q-table.csv'
-running_average_output = f'{results_folder_root}/running-averages.csv'
-figure_path = f'{results_folder_root}/Figures'
-default_path = f'{results_folder_root}/MULTI_WA_Juanita30m_1Dec2025/Results_27645/DailyResults.csv'  # must be DailyResults.csv
-calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must exactly match a column name in the DailyResults file
+xml_path = f'{working_directory}/XML/{xml_name}.xml'  # Set up your working directory so this line works as-is
+calibration_results_path = f'{working_directory}/Results/RL_Testing_2_year'  # All the calibration results will write to this folder. Recommend sub-folder of main results folder
+log_file_name = 'Juanita_RL_Development.txt'  # Name this file something descriptive
+default_path = f'{working_directory}/Results/MULTI_WA_Juanita30m_1Dec2025/Results_27645/DailyResults.csv'  # Compare to these results. Must point to a DailyResults.csv file
+calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must exactly match a column name in the DailyResults.csv file
 start_obs_data_year = 1987  # Enter the year the observed data starts from (be sure to check the observed data file)
 observed_file = f'{working_directory}/Data_Inputs30m/m_7_Observed/Juanita_observed_streamflow_1987-2021.csv'
 
 
 # Specify number of model years that constitute a data point and desired number of total data points
-n_years_per_point = 1
-n_data_points = 50
+n_years_per_point = 2
+n_data_points = 80
 
 # Specify number of data points in initial exploration period and rate of exploration
 # Recommend the initial exploration period should be at least (3 * number of parameters)
-n_initial_exploration = 21
+n_initial_exploration = 35
 epsilon = 0.2
 
 # Specify the following weights for Aggregate Performance Efficiency Statistic (APES)
@@ -56,14 +56,14 @@ r2_weight = 0.2
 
 # Specify downscaling and VELMA parallel parameters
 velma_parallel = True
-max_processes = "3"
+max_processes = "6"
 outlet_id = '27645'
 downscaling = True
-downscaling_factor = 3
+downscaling_factor = 9
 
 if velma_parallel == True and downscaling == True:
     divide_catchments_flag = True
-    number_catchments = 5
+    number_catchments = 6
     crs = 'EPSG:26910'
 
 # Define starting and allowable VELMA parameter ranges in this dictionary
@@ -87,21 +87,49 @@ velma_parameters = {
 
 # ------------------------------------------ Do not edit anything below this line ---------------------------------------------
 
+# Basic checks on the input directories
+for directory in [jar_path, working_directory, xml_path, default_path, observed_file]:
+    if not os.path.exists(directory):
+        print(f'FATAL WARNING: {directory} does not exist. Killing program. \nCheck directories and restart script.')
+        exit()
+if not os.path.exists(calibration_results_path):
+    os.mkdir(calibration_results_path)
+figure_path = f'{calibration_results_path}/Figures'
+if not os.path.exists(figure_path):
+    os.mkdir(figure_path)
+print('Input directories are valid.')
 
-# If downscaling_flag is True, perform downscaling and grab the new xml name
+# Outdated file / folder cleaning
+for year in range(start_learning_year, end_year+1):
+    if os.path.exists(f'{calibration_results_path}/Results_{year}'):
+        print(f'Removing outdated results folder Results_{year}')
+        shutil.rmtree(f'{calibration_results_path}/Results_{year}')
+
+# Initialize log file
+logfile = os.path.join(calibration_results_path, log_file_name)
+log_with_timestamp("Starting calibration script", logfile)
+log_message(f"Years per data point: {n_years_per_point}", logfile)
+
+# Handle downscaling in this block, if downscaling is on
 if downscaling == True:
-    xml_path = f'{working_directory}/XML/{xml_name}_resampled_{downscaling_factor}.xml'
-    xml_name = xml_name+f'_resampled_{downscaling_factor}'
-    if not os.path.exists(xml_path):
+    if not os.path.exists(f'{working_directory}/XML/{xml_name}_resampled_{downscaling_factor}.xml'):
         print('Performing downscaling.')
+        start_downscaling = start_timer()
         new_xml = resample_xml(xml_path, 'resampled', downscale_factor=downscaling_factor, plot_dem=False, overwrite=True, plot_hist=False, weights=None, change_disturbance_fraction=True)
+        downscaling_elapsed = elapsed_time(start_downscaling)
+        log_with_timestamp(f'Downscaling took {downscaling_elapsed} seconds. Downscaling factor is {downscaling_factor}.', logfile)
         tree = ET.parse(new_xml)
         new_downscaled_file = True
     else:
         print('Accessing previous downscaled model version.')
+        log_message(f'Previous downscaled model version was used. Downscaling factor is {downscaling_factor}.', logfile)
         new_downscaled_file = False
-        tree = ET.parse(xml_path)
+        tree = ET.parse(f'{working_directory}/XML/{xml_name}_resampled_{downscaling_factor}.xml')
     
+    xml_path = f'{working_directory}/XML/{xml_name}_resampled_{downscaling_factor}.xml'
+    xml_name = xml_name+f'_resampled_{downscaling_factor}'
+    
+    # Find the x, y location of the new outlet
     root = tree.getroot()
     input_props = root.find(".//VelmaInputs.properties")
     startup_props = root.find(".//VelmaStartups.properties")
@@ -127,24 +155,8 @@ if downscaling == True:
     # Update the outlet ID with the downscaled version
     new_outlet = row_col_to_index(asc_file_path, row, col)
     outlet_id = str(new_outlet)
-
-# Basic checks on the input directories
-for directory in [jar_path, working_directory, results_folder_root, xml_path, default_path, observed_file]:
-    if not os.path.exists(directory):
-        print(f'FATAL WARNING: {directory} does not exist. Killing program. \nCheck directories and restart script.')
-        exit()
-if not os.path.exists(figure_path):
-    os.mkdir(figure_path)
-
-# Outdated file / folder cleaning
-if os.path.exists(f'{results_folder_root}/{xml_name}'):
-    print(f'FATAL WARNING: {results_folder_root}/{xml_name} already exists. Killing program. \nEither delete or rename this folder and then restart the script.')
-    exit()
-print('Input directories are valid.')
-for year in range(start_learning_year, end_year+1):
-    if os.path.exists(f'{results_folder_root}/Results_{year}'):
-        print(f'Removing outdated results folder Results_{year}')
-        shutil.rmtree(f'{results_folder_root}/Results_{year}')
+else:
+    log_message('No downscaling used.', logfile)
 
 # Read in the observed data and assign an index by date
 observed_df = pd.read_csv(observed_file, usecols=[0], header=None, names=[calibration_data])
@@ -168,8 +180,8 @@ for metric, dict in zip(['nse', 'r2', 'soar_summer', 'soar'], default_results):
     df = pd.DataFrame.from_dict(dict, orient='index', columns=[metric])
     df.index.name = 'Year'
     output_file = f'default_{metric}.csv'
-    df.to_csv(f'{results_folder_root}/{output_file}')
-    print(f'Successfully wrote default {metric} to file {results_folder_root}/{output_file}.')
+    df.to_csv(f'{calibration_results_path}/{output_file}')
+    print(f'Successfully wrote default {metric} to file {calibration_results_path}/{output_file}.')
 
 parameter_names = [velma_parameters[param]["name"] for param in velma_parameters]
 
@@ -193,28 +205,32 @@ parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value
 
 # Run VELMA for spin-up years and output data at end to a folder
 end_spinup_year = start_learning_year - 1
-end_data = f'{results_folder_root}/Results_{str(end_spinup_year)}'
+end_data = f'{calibration_results_path}/Results_{str(end_spinup_year)}'
 if os.path.exists(end_data):
     print(f"Accessing data from previous spin-up years.")
 else:
     print(f"Running spin-up years {start_year} to {end_spinup_year}.")
+    log_with_timestamp('Starting spin-up model run', logfile)
+    start_spinup = start_timer()
     run_velma(velma_parallel, allocated_memory, jar_path, xml_path, start_year, end_spinup_year, end_data, parameter_modifiers, start_data=None, max_processes=max_processes)
+    spinup_elapsed = elapsed_time(start_spinup)
+    log_with_timestamp(f'Spin-up model run complete. Took {spinup_elapsed} seconds', logfile)
     print('Spin-up years complete.')
 
 # Check for spinup folder and rename if necessary
 if velma_parallel:
-    if not os.path.exists(f'{results_folder_root}/MULTI_{xml_name}_spinup'):
-        os.rename(f'{results_folder_root}/MULTI_{xml_name}', f'{results_folder_root}/MULTI_{xml_name}_spinup')
+    if not os.path.exists(f'{calibration_results_path}/MULTI_{xml_name}_spinup'):
+        os.rename(f'{calibration_results_path}/MULTI_{xml_name}', f'{calibration_results_path}/MULTI_{xml_name}_spinup')
 else:
-    if not os.path.exists(f'{results_folder_root}/{xml_name}_spinup'):
-        os.rename(f'{results_folder_root}/{xml_name}', f'{results_folder_root}/{xml_name}_spinup')
+    if not os.path.exists(f'{calibration_results_path}/{xml_name}_spinup'):
+        os.rename(f'{calibration_results_path}/{xml_name}', f'{calibration_results_path}/{xml_name}_spinup')
 if velma_parallel:
-    results_path = f'{results_folder_root}/MULTI_{xml_name}_spinup/Results_{outlet_id}/DailyResults.csv'
+    daily_results_path = f'{calibration_results_path}/MULTI_{xml_name}_spinup/Results_{outlet_id}/DailyResults.csv'
 else:
-    results_path = f'{results_folder_root}/{xml_name}_spinup/DailyResults.csv'
+    daily_results_path = f'{calibration_results_path}/{xml_name}_spinup/DailyResults.csv'
 
 # Calculate metrics by year for the simulated results - end up with a list of dictionaries
-results_df = results_interpreter(results_path, calibration_data)
+results_df = results_interpreter(daily_results_path, calibration_data)
 simulated_data = align_group_data(observed_df, results_df)
 results_nse_dict = calculate_nse(simulated_data, calibration_data)
 results_r2_dict = calculate_r2(simulated_data, calibration_data)
@@ -237,12 +253,13 @@ scoring_data.append(apes_score)
 scoring_data.append(end_spinup_year)
 scoring_df = pd.DataFrame(data=[scoring_data], columns=['NSE', 'R2', 'Summer SOAR', 'SOAR', 'APES Score', 'Year'])
 scoring_df = scoring_df.set_index('Year')
-scoring_df.to_csv(f'{results_folder_root}/apes_scores.csv')
+scoring_df.to_csv(f'{calibration_results_path}/apes_scores.csv')
 
 reward = evaluate_model(end_spinup_year, results=results, default_results=default_results, weights=weights)
 
 # Initialize Q-table
 # Check whether the file exists so that old data isn't overwritten
+q_table_output = f'{calibration_results_path}/q-table.csv'
 if not os.path.isfile(q_table_output):
     q_table = pd.DataFrame(columns=list(velma_parameters.keys())+['Reward', 'APES_Score'])
     q_table.to_csv(q_table_output, mode='w', index=False)
@@ -254,6 +271,7 @@ print('Q-table initialized.')
 
 # Check if running_averages.csv exists; if not, need to initialize it
 # Initialize table of parameters to record unique values and average NSE
+running_average_output = f'{calibration_results_path}/running-averages.csv'
 if os.path.isfile(running_average_output):
     running_average = pd.read_csv(running_average_output)
 else:
@@ -289,41 +307,49 @@ X_scaled = scaler.transform(X)
 
 # Gaussian Process Regression (surrogate model)
 Y = q_table['Reward'].values
-kernel = DotProduct(sigma_0_bounds=(1e-20, 1e5)) + Matern(length_scale_bounds=(1e-12, 100)) + WhiteKernel(noise_level=1)
+kernel = Matern(length_scale_bounds=(1e-6, 100)) + WhiteKernel(noise_level=1)
+# kernel = DotProduct(sigma_0_bounds=(1e-20, 1e5)) + Matern(length_scale_bounds=(1e-12, 100)) + WhiteKernel(noise_level=1)
 gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=200)
-gp_model = gp_model.fit(X_scaled, Y)
+log_with_timestamp(f"Initial GPR kernel: {gp_model.kernel}", logfile)
+if len(q_table) > n_initial_exploration:
+    gp_model.fit(X_scaled, Y)
+gpr_path = os.path.join(calibration_results_path, 'gpr_model.pkl')
+with open(gpr_path, "wb") as f:
+    pickle.dump(gp_model, f)
 
 def objective(parameters):
     predicted_reward = gp_model.predict([parameters])[0]
     return -predicted_reward
 
 # Run the below code in a loop to collect all data points
-for point in range(1, n_data_points+1):
+while len(q_table) <= n_data_points:
     if year+n_years_per_point > end_year:
-        'Re-starting model.'
+        log_message('Starting model from start learning year.', logfile)
         year = start_learning_year
         
-    print(f"Collecting data point number {point} out of {n_data_points}.")
+    print(f"Collecting data point number {len(q_table)} out of {n_data_points}.")
+    log_with_timestamp(f"Collecting data point number {len(q_table)} out of {n_data_points}.", logfile)
+    start_velma = start_timer()
     
     # Delete working results
     if velma_parallel:
-        if os.path.exists(f'{results_folder_root}/MULTI_{xml_name}'):
-            shutil.rmtree(f'{results_folder_root}/MULTI_{xml_name}')
+        if os.path.exists(f'{calibration_results_path}/MULTI_{xml_name}'):
+            shutil.rmtree(f'{calibration_results_path}/MULTI_{xml_name}')
     else:
-        if os.path.exists(f'{results_folder_root}/{xml_name}'):
-            shutil.rmtree(f'{results_folder_root}/{xml_name}')    
+        if os.path.exists(f'{calibration_results_path}/{xml_name}'):
+            shutil.rmtree(f'{calibration_results_path}/{xml_name}')    
 
     # Locations of folders for start data and end data
-    start_data = f'{results_folder_root}/Results_{str(year - 1)}'
-    end_data = f'{results_folder_root}/Results_{str(year+n_years_per_point-1)}'
+    start_data = f'{calibration_results_path}/Results_{str(year - 1)}'
+    end_data = f'{calibration_results_path}/Results_{str(year+n_years_per_point-1)}'
     if os.path.exists(end_data):
         shutil.rmtree(end_data)    
     
-    # If initial data collection is not complete, force random exploration of the parameter space
-    # There's a probability (epsilon) of further exploration of the parameter space
+    # If initial data collection is not complete, force exploration of the parameter space
+    # There's a probability (epsilon) of further random exploration of the parameter space
     if len(q_table) < n_initial_exploration or random.random() < epsilon:
         if len(q_table) < n_initial_exploration:
-            print("Q-table is too sparse.")
+            print(f"Q-table is too sparse. Need {n_initial_exploration} points in initial exploration.")
         print(f"Forcing random exploration of parameter space.")    
         parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
                             for param in velma_parameters]
@@ -340,21 +366,24 @@ for point in range(1, n_data_points+1):
     # Run VELMA for the current data point
     run_velma(velma_parallel, allocated_memory, jar_path, xml_path, year, year+n_years_per_point-1, end_data, parameter_modifiers, start_data, max_processes=max_processes)
     if velma_parallel:
-        results_path = f'{results_folder_root}/MULTI_{xml_name}/Results_{outlet_id}/DailyResults.csv'
+        daily_results_path = f'{calibration_results_path}/MULTI_{xml_name}/Results_{outlet_id}/DailyResults.csv'
     else:
-        results_path = f'{results_folder_root}/{xml_name}/DailyResults.csv'
-        
+        daily_results_path = f'{calibration_results_path}/{xml_name}/DailyResults.csv'
+    velma_elapsed = elapsed_time(start_velma)
+    log_with_timestamp(f'VELMA run complete. Took {velma_elapsed} seconds.', logfile)
+    
     # Delete unnecessary data to save space
     if year > start_learning_year:
         shutil.rmtree(start_data)
 
     # Calculate metric by year for the simulated results
-    results_df = results_interpreter(results_path, calibration_data)
+    results_df = results_interpreter(daily_results_path, calibration_data)
     simulated_data = align_group_data(observed_df, results_df)
     
     # If there is no observed data in these year(s), need to re-run the model
     if len(simulated_data) == 0:
         print(f'The year(s) {year} to {year+n_years_per_point-1} had no observed data. Re-running model without updated parameters.')
+        log_message('No observed data. Re-running model without updated parameters', logfile)
         year = year + n_years_per_point
         continue
     
@@ -368,6 +397,7 @@ for point in range(1, n_data_points+1):
     # If APES score is missing for any other reason (for example, no summertime data), need to re-run the model
     if np.isnan(apes_score):
         print(f'The year(s) {year} to {year+n_years_per_point-1} did not have a valid APES score. Re-running model without updated parameters.')
+        log_message('No valid APES score. Re-running model without updated parameters', logfile)
         year = year + n_years_per_point
         continue
 
@@ -377,7 +407,7 @@ for point in range(1, n_data_points+1):
     scoring_data = [dict[year] for dict in results]
     scoring_data.append(apes_score)
     scoring_df.loc[year] = scoring_data
-    scoring_df.to_csv(f'{results_folder_root}/apes_scores.csv')
+    scoring_df.to_csv(f'{calibration_results_path}/apes_scores.csv')
     
     # Calculate reward
     reward = evaluate_model(year, results=results, default_results=default_results, weights=weights)
@@ -408,91 +438,115 @@ for point in range(1, n_data_points+1):
             new_row = parameter_values + [mean_reward] + [1]
             running_average.loc[len(running_average)] = new_row
 
+    start_update = start_timer()
     # Save the running_averages to a .csv
     running_average.to_csv(running_average_output, index=False)
-
-    # Update GPR model with new data
-    X = running_average.iloc[:, :-2].values
-    X_scaled = scaler.transform(X)
-    Y = running_average['Average_Reward'].values
-    gp_model.fit(X_scaled, Y)
-    
-    # Y_pred for R^2 score
-    Y_pred = gp_model.predict(X_scaled)
-    r2 = r2_score(Y, Y_pred)
-    print(f'R^2 score for the GPR was {r2:.4f}')
-
-    # Add in data for plotting
-    X_plot = []
-    for i, col in enumerate(X_scaled.T):
-        X_added = []
-        for j in range(len(col)-1):
-            X_added.append(col[j])
-            X_added.append((col[j] + col[j+1])/2)
-        X_added.append(col[-1])
-        X_plot.append(X_added)
-    X_plot = np.array(X_plot)
-    X_plot = X_plot.T
-    Y_plot, sigma = gp_model.predict(X_plot, return_std=True)
-    X_plot = scaler.inverse_transform(X_plot)
-
-    # Plot the GPR
-    for i, col in enumerate(X_plot.T):
-        plt.figure(figsize=(10, 6))
-        sorted_indices = np.argsort(col)  # Sort by the values in the current column of X
-        X_sorted = col[sorted_indices]  # Sort the current column
-        Y_sorted = Y_plot[sorted_indices]
-        sigma = sigma[sorted_indices]
-        plt.plot(X.T[i], Y, 'r.', markersize=10, label='Observed Data')
-        plt.plot(X_sorted, Y_sorted, 'b-', label='GPR Predictions')
-        plt.fill_between(X_sorted, Y_sorted - 1.96 * sigma, Y_sorted + 1.96 * sigma,
-                        alpha=0.2, color='blue', label='95% Confidence Interval')
-        plt.title(f'Gaussian Process Regression Update for {parameter_names[i]}')
-        plt.xlabel(f'{parameter_names[i]}')
-        plt.ylabel('Rewards')
-        plt.legend()
-        plt.grid()
-        plt.savefig(f'{figure_path}/gpr_{parameter_names[i]}')
-        plt.close()
+    if len(q_table) > n_initial_exploration:
+        # Update GPR model with new data
+        X = running_average.iloc[:, :-2].values
+        X_scaled = scaler.transform(X)
+        Y = running_average['Average_Reward'].values
+        gp_model.fit(X_scaled, Y)
+        with open(gpr_path, "wb") as f:
+            pickle.dump(gp_model, f)
         
-    # Permutation importance calculation
-    perm_importance = permutation_importance(gp_model, X_scaled, Y, n_repeats=30, random_state=42)
+        # Y_pred for R^2 score
+        Y_pred = gp_model.predict(X_scaled)
+        r2 = r2_score(Y, Y_pred)
+        print(f'R^2 score for the GPR was {r2:.4f}')
 
-    # Plot permutation importance
-    plt.figure(figsize=(10, 6))
-    plt.bar(parameter_names, perm_importance.importances_mean, yerr=perm_importance.importances_std)
-    plt.title("Permutation Importance")
-    plt.ylabel("Drop in R² Score")
-    plt.savefig(f'{figure_path}/permutation_importance')
-    plt.close()
-    
-    # Run differential evolution to estimate the new parameter set
-    result = differential_evolution(
-        func=objective,
-        bounds=param_space,
-        maxiter=100,
-        popsize=15,
-        tol=1e-6,
-        mutation=(0.5, 1.0),
-        recombination=0.5,
-        seed=42,
-        polish=True,
-        disp=False,
-    )
-    best_scaled_params = result.x
-    best_parameters = scaler.inverse_transform([best_scaled_params])[0].tolist()
+        # Add in data for plotting
+        X_plot = []
+        for i, col in enumerate(X_scaled.T):
+            X_added = []
+            for j in range(len(col)-1):
+                X_added.append(col[j])
+                X_added.append((col[j] + col[j+1])/2)
+            X_added.append(col[-1])
+            X_plot.append(X_added)
+        X_plot = np.array(X_plot)
+        X_plot = X_plot.T
+        Y_plot, sigma = gp_model.predict(X_plot, return_std=True)
+        X_plot = scaler.inverse_transform(X_plot)
 
-    best_parameters = [round(param, 5) for param in best_parameters]
+        # Plot the GPR
+        for i, col in enumerate(X_plot.T):
+            plt.figure(figsize=(10, 6))
+            sorted_indices = np.argsort(col)  # Sort by the values in the current column of X
+            X_sorted = col[sorted_indices]  # Sort the current column
+            Y_sorted = Y_plot[sorted_indices]
+            sigma = sigma[sorted_indices]
+            plt.plot(X.T[i], Y, 'r.', markersize=10, label='Observed Data')
+            plt.plot(X_sorted, Y_sorted, 'b-', label='GPR Predictions')
+            plt.fill_between(X_sorted, Y_sorted - 1.96 * sigma, Y_sorted + 1.96 * sigma,
+                            alpha=0.2, color='blue', label='95% Confidence Interval')
+            plt.title(f'Gaussian Process Regression Update for {parameter_names[i]}')
+            plt.xlabel(f'{parameter_names[i]}')
+            plt.ylabel('Rewards')
+            plt.legend()
+            plt.grid()
+            plt.savefig(f'{figure_path}/gpr_{parameter_names[i]}')
+            plt.close()
+            
+        # Permutation importance calculation and dump to csv
+        perm_importance = permutation_importance(gp_model, X_scaled, Y, n_repeats=30, random_state=42)
+        perm_df = pd.DataFrame({
+        "feature": velma_parameters.keys(),   # you must have these separately
+        "importance_mean": perm_importance.importances_mean,
+        "importance_std": perm_importance.importances_std,
+        })
+        perm_df.to_csv(os.path.join(calibration_results_path, "permutation_importance.csv"), index=False)
 
-    # Update VELMA parameters for the next run
-    for idx, param in enumerate(velma_parameters.keys()):
-        velma_parameters[param]['value'] = best_parameters[idx]
-    parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
-    parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters] 
+        # Plot permutation importance
+        plt.figure(figsize=(10, 6))
+        plt.bar(parameter_names, perm_importance.importances_mean, yerr=perm_importance.importances_std)
+        plt.title("Permutation Importance")
+        plt.ylabel("Drop in R² Score")
+        plt.savefig(f'{figure_path}/permutation_importance')
+        plt.close()
+
+        # Run differential evolution to estimate the new parameter set
+        result = differential_evolution(
+            func=objective,
+            bounds=param_space,
+            maxiter=100,
+            popsize=10,
+            tol=1e-8,
+            mutation=(0.8, 1.2),
+            recombination=0.2,
+            seed=42,
+            polish=True,
+            disp=False,
+        )
+        best_scaled_params = result.x
+        best_parameters = scaler.inverse_transform([best_scaled_params])[0].tolist()
+
+        best_parameters = [round(param, 5) for param in best_parameters]
+        
+        update_elapsed = elapsed_time(start_update)
+        log_with_timestamp(f'GPR update, plotting, and differential evolution complete. Took {update_elapsed} seconds.', logfile)
+
+        # Update VELMA parameters for the next run
+        for idx, param in enumerate(velma_parameters.keys()):
+            velma_parameters[param]['value'] = best_parameters[idx]
+        parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
+        parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters] 
+    else:
+        log_message(f'Initial exploration phase: {len(q_table)} out of {n_initial_exploration} points. No GPR fitting performed.', logfile)
 
     year = year + n_years_per_point
-        
+
+
 print("Calibration process completed!")
 print("Best predicted parameters:")
 for param in velma_parameters.keys():
     print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")    
+log_with_timestamp(f'Calibration process completed!', logfile)
+log_message(
+    "Best predicted parameters:\n" +
+    "\n".join(
+        f"{velma_parameters[p]['name']}: {velma_parameters[p]['value']}"
+        for p in velma_parameters
+    ),
+    logfile
+)

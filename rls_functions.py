@@ -5,6 +5,8 @@ Helper functions for reinforcement learning calibration tool
 import pandas as pd
 import numpy as np
 import subprocess
+from datetime import datetime
+import time
 
 # Read in any DailyResults file and return dataframe of calibration data indexed by date
 def results_interpreter(csv_path, calibration_data):
@@ -18,8 +20,9 @@ def results_interpreter(csv_path, calibration_data):
     return results_df
 
 # Align dataframes and return data grouped by year
-def align_group_data(observed_df, results_df, calibration_data):
-    aligned = results_df.join(observed_df, lsuffix='_sim', rsuffix='_obs')
+def align_group_data(observed_df, results_df):
+    aligned = results_df.join(observed_df, how='inner', lsuffix='_sim', rsuffix='_obs')
+    intersection = results_df.index.intersection(observed_df.index)
     aligned = aligned.dropna()
     grouped = aligned.groupby(aligned.index.year)
     for year, data in grouped:
@@ -77,12 +80,22 @@ def calculate_soar(grouped_data, calibration_data):
 
 
 # Function to calculate APES score
-def calculate_apes(year, results, weights):
-    partial_apes = []
-    for dict, weight in zip(results, weights):
-        metric = dict[year]
-        partial_apes.append(metric*weight)
-    apes_score = sum(partial_apes) / len(partial_apes)
+def calculate_apes(years, results, weights):
+    apes_score_list = []
+    if isinstance(years, int):
+        years = [years]
+    for year in years:
+        partial_apes = []
+        for dict, weight in zip(results, weights):
+            if year not in dict:
+                continue  # Allows years with missing data
+            metric = dict[year]
+            partial_apes.append(metric*weight)
+        if not partial_apes:
+            continue
+        apes_score = sum(partial_apes) / len(partial_apes)
+        apes_score_list.append(apes_score)
+    apes_score = np.mean(apes_score_list)
     return apes_score
 
 # Function to evaluate model by the difference in APES score
@@ -130,3 +143,18 @@ def row_col_to_index(asc_file_path, row, col):
                 ncols = int(line.split()[1])
                 break
     return row * ncols + col
+
+# Logging helper functions
+def log_message(msg, logfile):
+    with open(logfile, "a") as f:
+        f.write(msg + "\n")
+        f.flush()
+
+def log_with_timestamp(message, logfile):
+    log_message(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}", logfile)
+
+def start_timer():
+    return time.time()
+
+def elapsed_time(start):
+    return round(time.time() - start, 0)  # seconds
