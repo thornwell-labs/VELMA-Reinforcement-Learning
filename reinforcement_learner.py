@@ -184,6 +184,7 @@ for metric, dict in zip(['nse', 'r2', 'soar_summer', 'soar'], default_results):
     print(f'Successfully wrote default {metric} to file {calibration_results_path}/{output_file}.')
 
 parameter_names = [velma_parameters[param]["name"] for param in velma_parameters]
+parameter_exact_names = velma_parameters.keys()
 
 # List of parameter values for easy dataframe writing
 parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
@@ -196,7 +197,7 @@ soil_type_dict = {
     'CN24': ['CN12', 'CN17'],
 }
 for soil_type, ratios in soil_type_dict.items():
-    for parameter in velma_parameters.keys():
+    for parameter in parameter_exact_names:
         if soil_type in parameter:
             for ratio in ratios:
                 extended_velma_parameters[parameter.replace(soil_type, ratio)] = extended_velma_parameters[parameter]
@@ -261,7 +262,7 @@ reward = evaluate_model(end_spinup_year, results=results, default_results=defaul
 # Check whether the file exists so that old data isn't overwritten
 q_table_output = f'{calibration_results_path}/q-table.csv'
 if not os.path.isfile(q_table_output):
-    q_table = pd.DataFrame(columns=list(velma_parameters.keys())+['Reward', 'APES_Score'])
+    q_table = pd.DataFrame(columns=parameter_exact_names+['Reward', 'APES_Score'])
     q_table.to_csv(q_table_output, mode='w', index=False)
 else:
     q_table = pd.read_csv(q_table_output)
@@ -275,7 +276,7 @@ running_average_output = f'{calibration_results_path}/running-averages.csv'
 if os.path.isfile(running_average_output):
     running_average = pd.read_csv(running_average_output)
 else:
-    running_average = pd.DataFrame(columns=list(velma_parameters.keys())+['Average_Reward']+['Data_Points'])
+    running_average = pd.DataFrame(columns=parameter_exact_names+['Average_Reward']+['Data_Points'])
     running_average.loc[0] = parameter_values + [reward] + [1]
     running_average.to_csv(running_average_output, index=False)
 
@@ -353,14 +354,14 @@ while len(q_table) <= n_data_points:
         print(f"Forcing random exploration of parameter space.")    
         parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
                             for param in velma_parameters]
-        for idx, param in enumerate(velma_parameters.keys()):
+        for idx, param in enumerate(parameter_exact_names):
             velma_parameters[param]['value'] = parameter_values[idx]
         # Formats parameters so they can modify the VELMA run
         parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
         
     # Print the parameter values, whether they were changed or not
     print(f"Values for {year} to {year+n_years_per_point-1} are:")
-    for param in velma_parameters.keys():
+    for param in parameter_exact_names:
         print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")
 
     # Run VELMA for the current data point
@@ -491,7 +492,7 @@ while len(q_table) <= n_data_points:
         # Permutation importance calculation and dump to csv
         perm_importance = permutation_importance(gp_model, X_scaled, Y, n_repeats=30, random_state=42)
         perm_df = pd.DataFrame({
-        "feature": velma_parameters.keys(),   # you must have these separately
+        "feature": parameter_exact_names,
         "importance_mean": perm_importance.importances_mean,
         "importance_std": perm_importance.importances_std,
         })
@@ -527,7 +528,7 @@ while len(q_table) <= n_data_points:
         log_with_timestamp(f'GPR update, plotting, and differential evolution complete. Took {update_elapsed} seconds.', logfile)
 
         # Update VELMA parameters for the next run
-        for idx, param in enumerate(velma_parameters.keys()):
+        for idx, param in enumerate(parameter_exact_names):
             velma_parameters[param]['value'] = best_parameters[idx]
         parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
         parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters] 
@@ -539,8 +540,15 @@ while len(q_table) <= n_data_points:
 
 print("Calibration process completed!")
 print("Best predicted parameters:")
-for param in velma_parameters.keys():
-    print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")    
+
+# Choose the parameters with the highest average reward
+best_row = running_average.loc[running_average['Average_Reward'].idxmax(), parameter_exact_names]
+for param in parameter_exact_names:
+    velma_parameters[param]['value'] = best_row[param]
+
+for param in parameter_exact_names:
+    print(f"{velma_parameters[param]['name']}: {velma_parameters[param]['value']}")   
+     
 log_with_timestamp(f'Calibration process completed!', logfile)
 log_message(
     "Best predicted parameters:\n" +
