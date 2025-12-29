@@ -9,14 +9,14 @@ import os
 import shutil
 from scipy.optimize import differential_evolution
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, DotProduct, WhiteKernel
+from sklearn.gaussian_process.kernels import Matern, DotProduct, WhiteKernel, RationalQuadratic
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
 import random
 from sklearn.inspection import permutation_importance
 from rls_functions import results_interpreter, align_group_data, calculate_apes, calculate_nse, \
 calculate_r2, calculate_soar, calculate_soar_summer, evaluate_model, run_velma, row_col_to_index, \
-log_message, log_with_timestamp, start_timer, elapsed_time
+log_message, log_with_timestamp, start_timer, elapsed_time, generate_lhs_param_sets
 from resample import resample_xml
 from divide_catchments import divide_catchments
 import xml.etree.ElementTree as ET
@@ -28,20 +28,19 @@ start_learning_year = 1991  # Start model calibration from this year
 end_year = 2021
 allocated_memory = "-Xmx2G"
 jar_path = "C:/Users/thorn/OneDrive/Desktop/JVelma_dev-test_v009.jar"
-working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Juanita'
-xml_name = 'WA_Juanita30m_1Dec2025'  # Do not include .xml extension in this name
+working_directory = 'C:/Users/thorn/Documents/VELMA_Watersheds/Big_Beef'
+xml_name = 'WA_BigBeef30m_5Dec2025'  # Do not include .xml extension in this name
 xml_path = f'{working_directory}/XML/{xml_name}.xml'  # Set up your working directory so this line works as-is
-calibration_results_path = f'{working_directory}/Results/RL_Testing_2_year'  # All the calibration results will write to this folder. Recommend sub-folder of main results folder
-log_file_name = 'Juanita_RL_Development.txt'  # Name this file something descriptive
-default_path = f'{working_directory}/Results/MULTI_WA_Juanita30m_1Dec2025/Results_27645/DailyResults.csv'  # Compare to these results. Must point to a DailyResults.csv file
+calibration_results_path = f'{working_directory}/Results/RL_Testing/RL_Testing_3_year_nse_cap'  # All the calibration results should write to a sub-folder. Set the xml to write to this folder, too.
+log_file_name = 'RL_Testing_3_year_nse_cap.txt'  # Name this file something descriptive
+default_path = f'{working_directory}/Results/MULTI_WA_BigBeef30m_5Dec2025/Results_23023/DailyResults.csv'  # Compare to these results. Must point to a DailyResults.csv file
 calibration_data = 'Runoff_All(mm/day)_Delineated_Average'  # must exactly match a column name in the DailyResults.csv file
 start_obs_data_year = 1987  # Enter the year the observed data starts from (be sure to check the observed data file)
-observed_file = f'{working_directory}/Data_Inputs30m/m_7_Observed/Juanita_observed_streamflow_1987-2021.csv'
-
+observed_file = f'{working_directory}/DataInputs30m/m_7_Observed/USGS12069550_BigBeef_1987-2021_streamflow.csv'
 
 # Specify number of model years that constitute a data point and desired number of total data points
-n_years_per_point = 2
-n_data_points = 80
+n_years_per_point = 3
+n_data_points = 100
 
 # Specify number of data points in initial exploration period and rate of exploration
 # Recommend the initial exploration period should be at least (3 * number of parameters)
@@ -55,15 +54,15 @@ summer_soar_weight = 0.7
 r2_weight = 0.2
 
 # Specify downscaling and VELMA parallel parameters
-velma_parallel = True
-max_processes = "6"
-outlet_id = '27645'
+velma_parallel = False
+max_processes = "4"
+outlet_id = '23023'
 downscaling = True
-downscaling_factor = 9
+downscaling_factor = 20
 
 if velma_parallel == True and downscaling == True:
     divide_catchments_flag = True
-    number_catchments = 6
+    number_catchments = 4
     crs = 'EPSG:26910'
 
 # Define starting and allowable VELMA parameter ranges in this dictionary
@@ -109,6 +108,12 @@ for year in range(start_learning_year, end_year+1):
 logfile = os.path.join(calibration_results_path, log_file_name)
 log_with_timestamp("Starting calibration script", logfile)
 log_message(f"Years per data point: {n_years_per_point}", logfile)
+log_message(f"Length of initial exploration: {n_initial_exploration} data points", logfile)
+log_message(f"Chance of random exploration (epsilon): {epsilon}", logfile)
+log_message("Parameters used: ", logfile)
+for key, info in velma_parameters.items():
+    log_message(f"[PARAM] {info['name']} (key={key}) | value={info['value']} | range=({info['min']}, {info['max']})", logfile)
+
 
 # Handle downscaling in this block, if downscaling is on
 if downscaling == True:
@@ -158,6 +163,18 @@ if downscaling == True:
 else:
     log_message('No downscaling used.', logfile)
 
+# Force the Results location to the specified results folder
+# Also ensure the simulation run name matches the xml name
+tree = ET.parse(xml_path)
+root = tree.getroot()
+elem = root.find(
+    ".//VelmaInputs.properties/initializeOutputDataLocationRoot"
+)
+elem.text = calibration_results_path
+run_elem = root.find(".//VelmaInputs.properties/run_index")
+run_elem.text = xml_name
+tree.write(xml_path)
+
 # Read in the observed data and assign an index by date
 observed_df = pd.read_csv(observed_file, usecols=[0], header=None, names=[calibration_data])
 start_date = f'1/1/{start_obs_data_year}'
@@ -184,7 +201,7 @@ for metric, dict in zip(['nse', 'r2', 'soar_summer', 'soar'], default_results):
     print(f'Successfully wrote default {metric} to file {calibration_results_path}/{output_file}.')
 
 parameter_names = [velma_parameters[param]["name"] for param in velma_parameters]
-parameter_exact_names = velma_parameters.keys()
+parameter_exact_names = list(velma_parameters.keys())
 
 # List of parameter values for easy dataframe writing
 parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
@@ -286,7 +303,7 @@ print('Average reward table initialized.')
 # Check whether the current parameter bounds or the min/max in the data should be used for scaling
 scaler = MinMaxScaler()
 param_bounds = ([[velma_parameters[param]['min'], velma_parameters[param]['max']] for param in velma_parameters])
-X = q_table.iloc[:, :-2].values
+X = running_average.iloc[:, :-2].values
 X_min = X.min(axis=0).tolist()
 X_max = X.max(axis=0).tolist()
 param_space = []
@@ -306,14 +323,39 @@ param_space = param_space.T
 param_space = [(bound[0], bound[1]) for bound in param_space]
 X_scaled = scaler.transform(X)
 
+# Generate samples using LHS for the initial exploration phase
+param_names, lhs_sets = generate_lhs_param_sets(velma_parameters, n_initial_exploration)
+if len(q_table) < n_initial_exploration:
+    sample = lhs_sets[len(q_table)]
+    for i, p in enumerate(parameter_exact_names):
+        velma_parameters[p]['value'] = float(sample[i])
+        parameter_values[i] = float(sample[i])
+    parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
+
 # Gaussian Process Regression (surrogate model)
-Y = q_table['Reward'].values
-kernel = Matern(length_scale_bounds=(1e-6, 100)) + WhiteKernel(noise_level=1)
-# kernel = DotProduct(sigma_0_bounds=(1e-20, 1e5)) + Matern(length_scale_bounds=(1e-12, 100)) + WhiteKernel(noise_level=1)
-gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=200)
-log_with_timestamp(f"Initial GPR kernel: {gp_model.kernel}", logfile)
+Y = running_average['Average_Reward'].values
+kernel = Matern(nu=1.5) + RationalQuadratic()
+# kernel = DotProduct(sigma_0_bounds=(1e-10, 1e5)) + Matern(length_scale_bounds=(1e-12, 100)) + WhiteKernel(noise_level=1)
+
+gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=50, alpha=0.05)
+log_with_timestamp(f"GPR kernel: {gp_model.kernel}", logfile)
+
+# If already past initial exploration, fit the GPR and randomize the parameters
 if len(q_table) > n_initial_exploration:
     gp_model.fit(X_scaled, Y)
+    
+    # Y_pred for R^2 score
+    Y_pred = gp_model.predict(X_scaled)
+    r2 = r2_score(Y, Y_pred)
+    print(f'R^2 score for the GPR was {r2:.4f}')
+    log_message(f'R^2 score for the GPR was {r2:.4f}', logfile)
+    parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
+                            for param in velma_parameters]
+    for idx, param in enumerate(parameter_exact_names):
+        velma_parameters[param]['value'] = parameter_values[idx]
+    # Formats parameters so they can modify the VELMA run
+    parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
+    
 gpr_path = os.path.join(calibration_results_path, 'gpr_model.pkl')
 with open(gpr_path, "wb") as f:
     pickle.dump(gp_model, f)
@@ -347,10 +389,16 @@ while len(q_table) <= n_data_points:
         shutil.rmtree(end_data)    
     
     # If initial data collection is not complete, force exploration of the parameter space
-    # There's a probability (epsilon) of further random exploration of the parameter space
-    if len(q_table) < n_initial_exploration or random.random() < epsilon:
-        if len(q_table) < n_initial_exploration:
-            print(f"Q-table is too sparse. Need {n_initial_exploration} points in initial exploration.")
+    if len(q_table) < n_initial_exploration:
+        print(f"Q-table is too sparse. Need {n_initial_exploration} points in initial exploration.")
+        sample = lhs_sets[len(q_table)]
+        for i, p in enumerate(parameter_exact_names):
+            velma_parameters[p]['value'] = float(sample[i])
+            parameter_values[i] = float(sample[i])
+        parameter_modifiers = [f'--kv="{param}",{extended_velma_parameters[param]["value"]}' for param in extended_velma_parameters]
+    
+    # After initial exploration, there's a probability (epsilon) of further random exploration of the parameter space
+    if len(q_table) >  n_initial_exploration and random.random() < epsilon:  
         print(f"Forcing random exploration of parameter space.")    
         parameter_values = [round(np.random.uniform(velma_parameters[param]['min'], velma_parameters[param]['max']), 5) 
                             for param in velma_parameters]
@@ -442,7 +490,7 @@ while len(q_table) <= n_data_points:
     start_update = start_timer()
     # Save the running_averages to a .csv
     running_average.to_csv(running_average_output, index=False)
-    if len(q_table) > n_initial_exploration:
+    if len(q_table) >= n_initial_exploration:
         # Update GPR model with new data
         X = running_average.iloc[:, :-2].values
         X_scaled = scaler.transform(X)
@@ -455,6 +503,7 @@ while len(q_table) <= n_data_points:
         Y_pred = gp_model.predict(X_scaled)
         r2 = r2_score(Y, Y_pred)
         print(f'R^2 score for the GPR was {r2:.4f}')
+        log_message(f'R^2 score for the GPR was {r2:.4f}', logfile)
 
         # Add in data for plotting
         X_plot = []
@@ -477,7 +526,7 @@ while len(q_table) <= n_data_points:
             X_sorted = col[sorted_indices]  # Sort the current column
             Y_sorted = Y_plot[sorted_indices]
             sigma = sigma[sorted_indices]
-            plt.plot(X.T[i], Y, 'r.', markersize=10, label='Observed Data')
+            plt.plot(X.T[i], Y, 'r.', markersize=10, label='Observed Reward')
             plt.plot(X_sorted, Y_sorted, 'b-', label='GPR Predictions')
             plt.fill_between(X_sorted, Y_sorted - 1.96 * sigma, Y_sorted + 1.96 * sigma,
                             alpha=0.2, color='blue', label='95% Confidence Interval')
@@ -531,6 +580,9 @@ while len(q_table) <= n_data_points:
         for idx, param in enumerate(parameter_exact_names):
             velma_parameters[param]['value'] = best_parameters[idx]
         parameter_values = [velma_parameters[param]["value"] for param in velma_parameters]
+        for p in parameter_exact_names:
+            if p in extended_velma_parameters:
+                extended_velma_parameters[p]['value'] = velma_parameters[p]['value']
         parameter_modifiers = [f'--kv="{param},{extended_velma_parameters[param]["value"]}"' for param in extended_velma_parameters] 
     else:
         log_message(f'Initial exploration phase: {len(q_table)} out of {n_initial_exploration} points. No GPR fitting performed.', logfile)
@@ -539,9 +591,9 @@ while len(q_table) <= n_data_points:
 
 
 print("Calibration process completed!")
-print("Best predicted parameters:")
+print("Parameters with best performance:")
 
-# Choose the parameters with the highest average reward
+# Choose the parameters with the highest actual average reward
 best_row = running_average.loc[running_average['Average_Reward'].idxmax(), parameter_exact_names]
 for param in parameter_exact_names:
     velma_parameters[param]['value'] = best_row[param]
@@ -551,7 +603,7 @@ for param in parameter_exact_names:
      
 log_with_timestamp(f'Calibration process completed!', logfile)
 log_message(
-    "Best predicted parameters:\n" +
+    "Parameters with best performance:\n" +
     "\n".join(
         f"{velma_parameters[p]['name']}: {velma_parameters[p]['value']}"
         for p in velma_parameters

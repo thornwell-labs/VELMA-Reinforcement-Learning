@@ -39,7 +39,10 @@ def calculate_nse(grouped_data, calibration_data):
         sim = data[f'{calibration_data}_sim']
         numerator = np.sum((obs-sim) ** 2)
         denominator = np.sum((obs - np.mean(obs)) ** 2)
-        nse_by_year[year] = 1 - (numerator / denominator)
+        nse = 1 - (numerator / denominator)
+        if nse < -2:  # Set a limit to NSE for better GPR fitting
+            nse = -2
+        nse_by_year[year] = nse
     return nse_by_year
 
 def calculate_r2(grouped_data, calibration_data):
@@ -158,3 +161,42 @@ def start_timer():
 
 def elapsed_time(start):
     return round(time.time() - start, 0)  # seconds
+
+
+# Two LHS sampling functions
+def lhs(n_samples, n_params):
+    result = np.zeros((n_samples, n_params))
+
+    # For each parameter dimension
+    for j in range(n_params):
+        # Cut [0,1] into n_samples
+        cut = np.linspace(0, 1, n_samples + 1)
+
+        # Random points inside each interval
+        u = np.random.rand(n_samples)
+        points = cut[:-1] + u * (cut[1:] - cut[:-1])
+
+        # Shuffle so each sample gets exactly one stratum
+        np.random.shuffle(points)
+
+        # Store
+        result[:, j] = points
+
+    return result
+
+def generate_lhs_param_sets(velma_parameters, n_samples):
+    param_names = list(velma_parameters.keys())
+    n_params = len(param_names)
+
+    # LHS in [0,1]
+    unit_samples = lhs(n_samples, n_params)
+
+    # Scale to parameter ranges
+    scaled = np.zeros_like(unit_samples)
+    for i, p in enumerate(param_names):
+        pmin = velma_parameters[p]['min']
+        pmax = velma_parameters[p]['max']
+        scaled[:, i] = pmin + unit_samples[:, i] * (pmax - pmin)
+        scaled = np.round(scaled, 4)
+
+    return param_names, scaled
